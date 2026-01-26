@@ -226,7 +226,7 @@ export default function App() {
             tabIndex={currentView === 'dashboard' ? 0 : -1}
             aria-selected={currentView === 'dashboard'}
             aria-controls="dashboard-panel"
-            className={`flex items-center justify-center gap-1.5 md:gap-2 px-3 md:px-5 py-2.5 md:py-3 rounded-lg transition-all duration-200 flex-1 relative min-h-[44px] ${
+            className={`flex items-center justify-center gap-1.5 md:gap-2 px-3 md:px-5 py-2.5 md:py-3 rounded-lg transition-all duration-200 ease-in-out flex-1 relative min-h-[44px] cursor-pointer ${
               currentView === 'dashboard'
                 ? 'bg-primary text-primary-foreground shadow-md'
                 : 'text-muted-foreground hover:text-foreground hover:bg-primary/5'
@@ -250,7 +250,7 @@ export default function App() {
             tabIndex={currentView === 'library' ? 0 : -1}
             aria-selected={currentView === 'library'}
             aria-controls="library-panel"
-            className={`flex items-center justify-center gap-1.5 md:gap-2 px-3 md:px-5 py-2.5 md:py-3 rounded-lg transition-all duration-200 flex-1 relative min-h-[44px] ${
+            className={`flex items-center justify-center gap-1.5 md:gap-2 px-3 md:px-5 py-2.5 md:py-3 rounded-lg transition-all duration-200 ease-in-out flex-1 relative min-h-[44px] cursor-pointer ${
               currentView === 'library'
                 ? 'bg-primary text-primary-foreground shadow-md'
                 : 'text-muted-foreground hover:text-foreground hover:bg-primary/5'
@@ -274,7 +274,7 @@ export default function App() {
             tabIndex={currentView === 'progress' ? 0 : -1}
             aria-selected={currentView === 'progress'}
             aria-controls="progress-panel"
-            className={`flex items-center justify-center gap-1.5 md:gap-2 px-3 md:px-5 py-2.5 md:py-3 rounded-lg transition-all duration-200 flex-1 relative min-h-[44px] ${
+            className={`flex items-center justify-center gap-1.5 md:gap-2 px-3 md:px-5 py-2.5 md:py-3 rounded-lg transition-all duration-200 ease-in-out flex-1 relative min-h-[44px] cursor-pointer ${
               currentView === 'progress'
                 ? 'bg-primary text-primary-foreground shadow-md'
                 : 'text-muted-foreground hover:text-foreground hover:bg-primary/5'
@@ -298,7 +298,7 @@ export default function App() {
             tabIndex={currentView === 'settings' ? 0 : -1}
             aria-selected={currentView === 'settings'}
             aria-controls="settings-panel"
-            className={`flex items-center justify-center gap-1.5 md:gap-2 px-3 md:px-5 py-2.5 md:py-3 rounded-lg transition-all duration-200 flex-1 relative min-h-[44px] ${
+            className={`flex items-center justify-center gap-1.5 md:gap-2 px-3 md:px-5 py-2.5 md:py-3 rounded-lg transition-all duration-200 ease-in-out flex-1 relative min-h-[44px] cursor-pointer ${
               currentView === 'settings'
                 ? 'bg-primary text-primary-foreground shadow-md'
                 : 'text-muted-foreground hover:text-foreground hover:bg-primary/5'

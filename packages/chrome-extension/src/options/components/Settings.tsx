@@ -1,8 +1,8 @@
 import type { UserSettings, Theme } from '@stretchly/shared';
 import * as Switch from '@radix-ui/react-switch';
-import { Bell, Clock, Trash2, Info, Lightbulb, Palette } from 'lucide-react';
+import { Lightbulb } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
-import { getThemeDisplayName, getThemeDescription, themes } from '../../utils/themes';
+import { getThemeDisplayName, themes } from '../../utils/themes';
 
 interface SettingsProps {
   settings: UserSettings;
@@ -43,81 +43,47 @@ export function Settings({ settings, onUpdateSettings, onClearRelief }: Settings
   const themeOptions: Theme[] = ['fast-wellness', 'calm', 'energizer'];
 
   return (
-    <div className="space-y-4 md:space-y-6">
-      {/* Theme Selection */}
-      <div className="bg-card rounded-xl p-6 md:p-7 shadow-sm border border-border">
-        <div className="flex items-center gap-4 mb-6">
-          <div className="w-11 h-11 bg-primary/10 rounded-lg flex items-center justify-center">
-            <Palette className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <h2 className="text-foreground text-lg font-bold">Theme</h2>
-            <p className="text-muted-foreground text-sm mt-1">Choose your visual style</p>
+    <div className="space-y-6 pb-6">
+      {/* Theme + Reminders */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Theme Selection */}
+        <div className="bg-card rounded-xl p-6 shadow-sm border border-border">
+          <h2 className="text-foreground text-lg font-bold mb-4">Theme</h2>
+          <div className="flex gap-3">
+            {themeOptions.map((theme) => {
+              const colors = themes[theme];
+              const isSelected = settings.theme === theme;
+              return (
+                <button
+                  key={theme}
+                  onClick={() => onUpdateSettings({ ...settings, theme })}
+                  className={`flex-1 p-4 rounded-lg border-2 transition-all duration-200 ${
+                    isSelected
+                      ? 'border-primary bg-primary/5 shadow-sm'
+                      : 'border-border hover:border-primary/40 active:scale-95'
+                  }`}
+                  title={getThemeDisplayName(theme)}
+                >
+                  <div className="w-full h-16 rounded mb-2 flex items-center justify-center gap-2" style={{ backgroundColor: colors.primary }}>
+                    <div className="w-6 h-6 rounded" style={{ backgroundColor: colors.accent }} />
+                  </div>
+                  <p className="text-foreground text-sm font-medium">{getThemeDisplayName(theme)}</p>
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        <div className="space-y-3">
-          {themeOptions.map((theme) => {
-            const colors = themes[theme];
-            const isSelected = settings.theme === theme;
-            return (
-              <button
-                key={theme}
-                onClick={() => onUpdateSettings({ ...settings, theme })}
-                className={`w-full p-4 rounded-xl border-2 transition-all duration-200 text-left ${
-                  isSelected
-                    ? 'border-primary bg-primary/5 shadow-sm ring-2 ring-primary/20'
-                    : 'border-border hover:border-primary/40 active:scale-95'
-                }`}
-              >
-                <div className="flex items-start gap-4">
-                  <div className="flex-shrink-0">
-                    <div className="w-12 h-12 rounded-lg flex items-center justify-center" style={{ backgroundColor: colors.primary }}>
-                      <div className="w-6 h-6 rounded" style={{ backgroundColor: colors.accent }} />
-                    </div>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-1">
-                      <h3 className="text-foreground font-semibold text-sm">{getThemeDisplayName(theme)}</h3>
-                      {isSelected && (
-                        <span className="px-2 py-0.5 bg-primary/10 text-primary rounded text-xs font-medium">
-                          Active
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-muted-foreground text-xs mb-2">{getThemeDescription(theme)}</p>
-                    <div className="flex gap-1.5">
-                      <div className="w-4 h-4 rounded" style={{ backgroundColor: colors.primary }} title="Primary" />
-                      <div className="w-4 h-4 rounded" style={{ backgroundColor: colors.secondary }} title="Secondary" />
-                      <div className="w-4 h-4 rounded" style={{ backgroundColor: colors.accent }} title="Accent" />
-                    </div>
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Reminders - Enhanced */}
-      <div className="bg-card rounded-xl p-6 md:p-7 shadow-sm border border-border">
-        <div className="flex items-center gap-4 mb-6">
-          <div className="w-11 h-11 bg-primary/10 rounded-lg flex items-center justify-center">
-            <Bell className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <h2 className="text-foreground text-lg font-bold">Smart Break Reminders</h2>
-            <p className="text-muted-foreground text-sm mt-1">Get notified to take mobility breaks</p>
-          </div>
-        </div>
+        {/* Reminders */}
+        <div className="bg-card rounded-xl p-6 shadow-sm border border-border">
+          <h2 className="text-foreground text-lg font-bold mb-4">Reminders</h2>
 
         <div className="space-y-6">
           <div className="flex items-center justify-between p-4 bg-muted rounded-xl">
-            <label htmlFor="reminders-toggle" className="text-foreground font-medium cursor-pointer">
+            <label className="text-foreground font-medium">
               Enable reminders
             </label>
             <Switch.Root
-              id="reminders-toggle"
               checked={settings.remindersEnabled}
               onCheckedChange={checked =>
                 onUpdateSettings({ ...settings, remindersEnabled: checked })
@@ -142,10 +108,10 @@ export function Settings({ settings, onUpdateSettings, onClearRelief }: Settings
                   <button
                     key={preset}
                     onClick={() => onUpdateSettings({ ...settings, reminderInterval: preset })}
-                    className={`py-2.5 px-3 rounded-lg border-2 transition-all duration-200 text-sm font-medium ${
+                    className={`py-2.5 px-3 rounded-lg border-2 transition-all duration-200 text-sm font-medium cursor-pointer ${
                       settings.reminderInterval === preset
                         ? 'border-primary bg-primary/10 text-primary shadow-sm'
-                        : 'border-border text-foreground hover:border-primary/40 active:scale-95'
+                        : 'border-border text-foreground hover:border-primary/40 hover:bg-primary/5 active:scale-95'
                     }`}
                   >
                     {preset} min
@@ -172,29 +138,22 @@ export function Settings({ settings, onUpdateSettings, onClearRelief }: Settings
             </div>
           )}
         </div>
+        </div>
       </div>
 
-      {/* Preferred Duration - Consistent Colors */}
-      <div className="bg-card rounded-xl p-6 md:p-7 shadow-sm border border-border">
-        <div className="flex items-center gap-4 mb-6">
-          <div className="w-11 h-11 bg-primary/10 rounded-lg flex items-center justify-center">
-            <Clock className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <h2 className="text-foreground text-lg font-bold">Preferred Session Duration</h2>
-            <p className="text-muted-foreground text-sm mt-1">Default length for quick routines</p>
-          </div>
-        </div>
+      {/* Preferred Duration */}
+      <div className="bg-card rounded-xl p-6 shadow-sm border border-border">
+        <h2 className="text-foreground text-lg font-bold mb-4">Session Duration</h2>
 
         <div className="flex gap-3">
           {[1, 2, 3].map(duration => (
             <button
               key={duration}
               onClick={() => onUpdateSettings({ ...settings, preferredDuration: duration })}
-              className={`flex-1 py-4 rounded-lg border-2 transition-all duration-200 ${
+              className={`flex-1 py-4 rounded-lg border-2 transition-all duration-200 cursor-pointer ${
                 settings.preferredDuration === duration
                   ? 'border-primary bg-primary/5 text-primary shadow-sm'
-                  : 'border-border text-foreground hover:border-primary/40 active:scale-95'
+                  : 'border-border text-foreground hover:border-primary/40 hover:bg-primary/5 active:scale-95'
               }`}
             >
               <div className="text-2xl font-bold mb-1">{duration}</div>
@@ -204,14 +163,9 @@ export function Settings({ settings, onUpdateSettings, onClearRelief }: Settings
         </div>
       </div>
 
-      {/* About - Enhanced */}
-      <div className="bg-card rounded-xl p-6 md:p-7 shadow-sm border border-border">
-        <div className="flex items-center gap-4 mb-6">
-          <div className="w-11 h-11 bg-primary/10 rounded-lg flex items-center justify-center">
-            <Info className="w-5 h-5 text-primary" />
-          </div>
-          <h2 className="text-foreground text-lg font-bold">About Stretchly</h2>
-        </div>
+      {/* About */}
+      <div className="bg-card rounded-xl p-6 shadow-sm border border-border">
+        <h2 className="text-foreground text-lg font-bold mb-4">About</h2>
         <p className="text-muted-foreground mb-6 leading-relaxed">
           Stretchly is a moment-based, micro-mobility system designed for desk workers who need
           instant relief without leaving their workspace. Each routine is 60-180 seconds,
@@ -234,59 +188,21 @@ export function Settings({ settings, onUpdateSettings, onClearRelief }: Settings
       </div>
 
       {/* Tips */}
-      <div className="bg-gradient-to-br from-primary/5 to-primary/10 rounded-xl p-6 border border-primary/20">
-        <div className="flex items-center gap-2 mb-3">
+      <div className="bg-primary/5 rounded-xl p-6 border border-primary/20">
+        <div className="flex items-center gap-2 mb-4">
           <Lightbulb className="w-5 h-5 text-primary" />
-          <h3 className="text-foreground">Maximizing Relief</h3>
+          <h3 className="text-foreground font-semibold">Tips</h3>
         </div>
-        <ul className="space-y-3 text-sm text-foreground">
-          <li className="flex gap-3">
-            <span className="text-primary flex-shrink-0">•</span>
-            <span>
-              <strong>Consistency beats intensity</strong> — short daily sessions are more
-              effective than occasional long workouts
-            </span>
-          </li>
-          <li className="flex gap-3">
-            <span className="text-primary flex-shrink-0">•</span>
-            <span>
-              <strong>Listen to your body</strong> — never push through sharp pain, only gentle
-              discomfort
-            </span>
-          </li>
-          <li className="flex gap-3">
-            <span className="text-primary flex-shrink-0">•</span>
-            <span>
-              <strong>Breathe deeply</strong> — slow, deliberate breathing enhances relief
-            </span>
-          </li>
-          <li className="flex gap-3">
-            <span className="text-primary flex-shrink-0">•</span>
-            <span>
-              <strong>Track your pain</strong> — accurate before/after ratings help identify what
-              works best for you
-            </span>
-          </li>
-          <li className="flex gap-3">
-            <span className="text-primary flex-shrink-0">•</span>
-            <span>
-              <strong>Productivity link</strong> — regular breaks actually improve focus and output
-            </span>
-          </li>
+        <ul className="space-y-2 text-sm text-foreground">
+          <li>Consistency beats intensity — short daily sessions are more effective</li>
+          <li>Listen to your body — never push through sharp pain</li>
+          <li>Regular breaks improve focus and productivity</li>
         </ul>
       </div>
 
-      {/* Data Management - Enhanced with Confirmation */}
-      <div className="bg-card rounded-xl p-4 md:p-6 shadow-sm border-2 border-red-100 dark:border-red-900/30">
-        <div className="flex items-center gap-4 mb-4">
-          <div className="w-11 h-11 bg-red-100 dark:bg-red-900/20 rounded-lg flex items-center justify-center">
-            <Trash2 className="w-5 h-5 text-red-600 dark:text-red-400" />
-          </div>
-          <div>
-            <h2 className="text-foreground text-lg font-bold">Data Management</h2>
-            <p className="text-muted-foreground text-sm mt-1">Manage your stored data</p>
-          </div>
-        </div>
+      {/* Data Management */}
+      <div className="bg-card rounded-xl p-6 shadow-sm border-2 border-red-100 dark:border-red-900/30">
+        <h2 className="text-foreground text-lg font-bold mb-4">Data Management</h2>
 
         {!showClearConfirm ? (
           <>

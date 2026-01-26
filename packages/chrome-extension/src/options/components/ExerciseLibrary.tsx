@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import type { Exercise } from '@stretchly/shared';
 import { exercises } from '@stretchly/shared';
-import { Clock, Plus, Check, AlertCircle, Lightbulb, Play, Search, X } from 'lucide-react';
+import { Clock, Plus, Check, AlertCircle, Play } from 'lucide-react';
 import { ExerciseAnimation } from './ExerciseAnimations';
 import { PainScale } from './PainScale';
 
@@ -17,7 +17,6 @@ export function ExerciseLibrary({ onStartRoutine }: ExerciseLibraryProps) {
   const [showLaunchModal, setShowLaunchModal] = useState(false);
   const [painLevel, setPainLevel] = useState(5);
   const [previewExercise, setPreviewExercise] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
   const launchButtonRef = useRef<HTMLButtonElement>(null);
   const launchModalCancelRef = useRef<HTMLButtonElement>(null);
   const previewOpenerRef = useRef<HTMLElement | null>(null);
@@ -34,21 +33,10 @@ export function ExerciseLibrary({ onStartRoutine }: ExerciseLibraryProps) {
   ];
 
   const filteredExercises = useMemo(() => {
-    let result = selectedCategory === 'all'
+    return selectedCategory === 'all'
       ? exercises
       : exercises.filter(ex => ex.category === selectedCategory);
-    
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      result = result.filter(ex => 
-        ex.name.toLowerCase().includes(query) ||
-        ex.description.toLowerCase().includes(query) ||
-        ex.instructions.some(inst => inst.toLowerCase().includes(query))
-      );
-    }
-    
-    return result;
-  }, [selectedCategory, searchQuery]);
+  }, [selectedCategory]);
 
   const isInCustomRoutine = (exercise: Exercise) => {
     return customRoutine.some(ex => ex.id === exercise.id);
@@ -105,45 +93,18 @@ export function ExerciseLibrary({ onStartRoutine }: ExerciseLibraryProps) {
   }, [previewExercise]);
 
   return (
-    <div className="space-y-4 md:space-y-6">
-      {/* Search Bar - New */}
-      <div className="bg-card rounded-xl p-4 md:p-5 shadow-sm border border-border">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search exercises..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-10 py-2.5 bg-muted border border-border rounded-lg text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-          />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery('')}
-              className="absolute right-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-muted-foreground hover:text-foreground transition-colors"
-              aria-label="Clear search"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Category Filter - Enhanced */}
-      <div className="bg-card rounded-xl p-4 md:p-5 shadow-sm border border-border">
-        <p className="text-foreground mb-3 md:mb-4 font-semibold text-sm">Browse by area</p>
+    <div className="space-y-6 pb-6">
+      {/* Category Filter */}
+      <div className="bg-card rounded-xl p-5 shadow-sm border border-border">
         <div className="flex flex-wrap gap-2">
           {categories.map(cat => (
             <button
               key={cat.key}
-              onClick={() => {
-                setSelectedCategory(cat.key);
-                setSearchQuery(''); // Clear search when changing category
-              }}
-              className={`px-4 py-2.5 rounded-lg transition-all duration-200 font-medium text-sm min-h-[44px] ${
+              onClick={() => setSelectedCategory(cat.key)}
+              className={`px-4 py-2.5 rounded-lg transition-all duration-200 font-medium text-sm min-h-[44px] cursor-pointer ${
                 selectedCategory === cat.key
                   ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'bg-muted text-muted-foreground hover:bg-primary/10 active:scale-95'
+                  : 'bg-muted text-muted-foreground hover:text-foreground hover:bg-primary/5 active:scale-95'
               }`}
             >
               {cat.label}
@@ -152,30 +113,29 @@ export function ExerciseLibrary({ onStartRoutine }: ExerciseLibraryProps) {
         </div>
       </div>
 
-      {/* Custom Routine Builder - Enhanced */}
+      {/* Custom Routine Builder */}
       {customRoutine.length > 0 && (
-        <div className="bg-gradient-primary rounded-xl p-6 md:p-7 text-white shadow-lg border border-primary/30">
-          <div className="flex flex-wrap items-center justify-between gap-4 mb-5">
-            <div className="min-w-0">
+        <div className="bg-primary rounded-xl p-5 text-white shadow-lg">
+          <div className="flex items-center justify-between mb-4">
+            <div>
               <h3 className="text-lg font-bold mb-1">Custom Routine</h3>
               <p className="text-white/90 text-sm">
-                {customRoutine.length} exercise{customRoutine.length !== 1 ? 's' : ''} • ~
-                {totalDuration}s total
+                {customRoutine.length} exercise{customRoutine.length !== 1 ? 's' : ''} • {totalDuration}s
               </p>
             </div>
             <button
               ref={launchButtonRef}
               onClick={() => setShowLaunchModal(true)}
-              className="min-w-0 shrink-0 px-6 md:px-8 py-3 rounded-lg bg-accent text-accent-foreground hover:bg-accent active:scale-95 transition-all duration-200 shadow-md hover:shadow-lg font-semibold text-sm"
+              className="px-6 py-3 rounded-lg bg-accent text-accent-foreground hover:bg-accent active:scale-95 transition-all duration-200 shadow-md font-semibold"
             >
-              Launch Routine
+              Launch
             </button>
           </div>
           <div className="flex flex-wrap gap-2">
             {customRoutine.map(ex => (
               <div
                 key={ex.id}
-                className="bg-white/20 backdrop-blur-sm px-4 py-2 rounded-xl text-sm flex items-center gap-2 font-medium"
+                className="bg-white/20 px-3 py-1.5 rounded-lg text-sm flex items-center gap-2 font-medium"
               >
                 {ex.name}
                 <button
@@ -191,7 +151,7 @@ export function ExerciseLibrary({ onStartRoutine }: ExerciseLibraryProps) {
         </div>
       )}
 
-      {/* Launch Modal - Enhanced */}
+      {/* Launch Modal */}
       {showLaunchModal && (
         <div
           className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in"
@@ -201,13 +161,10 @@ export function ExerciseLibrary({ onStartRoutine }: ExerciseLibraryProps) {
           onClick={() => setShowLaunchModal(false)}
         >
           <div
-            className="bg-card rounded-2xl p-8 max-w-md w-full shadow-2xl animate-in slide-in-from-bottom-4 duration-300 border border-border"
+            className="bg-card rounded-xl p-6 max-w-md w-full shadow-2xl animate-in slide-in-from-bottom-4 duration-300 border border-border"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 id="launch-modal-title" className="text-2xl text-foreground mb-2 font-bold">Ready to start?</h2>
-            <p className="text-muted-foreground mb-6 text-base">
-              Rate your current discomfort level before starting
-            </p>
+            <h2 id="launch-modal-title" className="text-xl text-foreground mb-4 font-bold">Rate your discomfort</h2>
 
             <div className="mb-6">
               <PainScale
@@ -225,26 +182,25 @@ export function ExerciseLibrary({ onStartRoutine }: ExerciseLibraryProps) {
               <button
                 ref={launchModalCancelRef}
                 onClick={() => setShowLaunchModal(false)}
-                className="flex-1 bg-muted text-muted-foreground py-4 rounded-lg hover:bg-primary/10 active:scale-95 transition-all duration-200 font-medium"
+                className="flex-1 bg-muted text-foreground py-3 rounded-lg hover:bg-primary/10 active:scale-95 transition-all duration-200 font-medium"
               >
                 Cancel
               </button>
               <button
                 onClick={startCustomRoutine}
-                className="flex-1 bg-accent text-accent-foreground py-4 rounded-lg hover:bg-accent active:scale-95 transition-all duration-200 shadow-lg hover:shadow-xl font-semibold"
+                className="flex-1 bg-accent text-accent-foreground py-3 rounded-lg hover:bg-accent active:scale-95 transition-all duration-200 shadow-lg font-semibold"
               >
-                Start Now
+                Start
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Exercise Grid - Enhanced */}
+      {/* Exercise Grid */}
       {filteredExercises.length > 0 && (
-        <div className="text-sm text-muted-foreground mb-2">
-          {filteredExercises.length} exercise{filteredExercises.length !== 1 ? 's' : ''} found
-          {searchQuery && ` for "${searchQuery}"`}
+        <div className="text-sm text-muted-foreground mb-3">
+          {filteredExercises.length} exercise{filteredExercises.length !== 1 ? 's' : ''}
         </div>
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-5">
@@ -262,19 +218,19 @@ export function ExerciseLibrary({ onStartRoutine }: ExerciseLibraryProps) {
             >
               {/* Header - fixed at top */}
               <div className="flex items-start justify-between mb-4 shrink-0">
-                <span className="px-3 py-1.5 bg-primary/10 text-primary rounded-full text-xs font-medium">
+                <span className="px-3 py-1.5 bg-primary/10 text-primary rounded-full text-xs font-medium ">
                   {exercise.category}
                 </span>
                 <button
                   onClick={() => toggleExerciseInRoutine(exercise)}
-                  className={`w-8 h-8 rounded-md flex items-center justify-center transition-all duration-200 focus-subtle ${
+                  className={`w-8 h-8 rounded-md flex items-center justify-center transition-all duration-200 focus-subtle group cursor-pointer ${
                     isSelected
                       ? 'bg-primary text-primary-foreground shadow-sm hover:bg-primary-hover hover:scale-110'
                       : 'bg-muted text-muted-foreground hover:bg-primary hover:text-white hover:scale-110 active:scale-95'
                   }`}
                   aria-label={isSelected ? `Remove ${exercise.name}` : `Add ${exercise.name}`}
                 >
-                  {isSelected ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                  {isSelected ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4 group-hover:text-white transition-colors" />}
                 </button>
               </div>
 
@@ -309,10 +265,10 @@ export function ExerciseLibrary({ onStartRoutine }: ExerciseLibraryProps) {
                   previewOpenerRef.current = e.currentTarget;
                   setPreviewExercise(exercise.id);
                 }}
-                className="w-full flex items-center justify-center gap-2 border border-primary text-primary bg-transparent hover:bg-primary hover:text-white active:scale-95 transition-all duration-200 font-medium px-4 py-2.5 rounded-md hover:shadow-md text-sm focus-prominent shrink-0"
+                className="group w-full flex items-center justify-center gap-2 border border-primary text-primary bg-transparent hover:bg-primary group-hover:text-white hover:text-white active:scale-95 transition-all duration-200 font-medium px-4 py-2.5 rounded-md hover:shadow-md text-sm focus-prominent shrink-0 cursor-pointer"
               >
-                <Play className="w-4 h-4 text-current" />
-                Watch animation
+                <Play className="w-4 h-4 text-primary group-hover:text-white hover:text-white transition-colors" />
+                <span className="group-hover:text-white transition-colors">Watch animation</span>
               </button>
             </div>
           );
@@ -324,42 +280,13 @@ export function ExerciseLibrary({ onStartRoutine }: ExerciseLibraryProps) {
           <AlertCircle className="w-12 h-12 text-disabled-foreground mx-auto mb-4" />
           <p className="text-foreground font-medium mb-2">No exercises found</p>
           <p className="text-muted-foreground text-sm">
-            {searchQuery 
-              ? `Try a different search term or clear the search to see all exercises.`
-              : `No exercises in this category. Try selecting "All" or another category.`
-            }
+            No exercises in this category. Try selecting "All" or another category.
           </p>
-          {searchQuery && (
-            <button
-              onClick={() => {
-                setSearchQuery('');
-                setSelectedCategory('all');
-              }}
-              className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary-hover transition-colors text-sm font-medium"
-            >
-              Clear search & show all
-            </button>
-          )}
         </div>
       )}
 
-      {/* Info Banner */}
-      {filteredExercises.length > 0 && (
-        <div className="bg-primary/10 rounded-xl p-6 border border-primary/20">
-          <div className="flex items-start gap-3">
-            <Lightbulb className="w-5 h-5 text-primary flex-shrink-0 mt-0.5" />
-            <div>
-              <h3 className="text-foreground mb-2 font-semibold">Building Custom Routines</h3>
-              <p className="text-muted-foreground text-sm">
-                Select 2-4 exercises that target your specific needs. Keep total duration under 3
-                minutes for best compliance. Mix and match areas for full-body relief sessions.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
 
-      {/* Exercise Animation Preview - Compact */}
+      {/* Exercise Animation Preview */}
       {previewExercise && (
         <div
           className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in"
@@ -369,11 +296,11 @@ export function ExerciseLibrary({ onStartRoutine }: ExerciseLibraryProps) {
           onClick={() => setPreviewExercise(null)}
         >
           <div
-            className="bg-card rounded-xl p-5 max-w-md w-full shadow-2xl animate-in slide-in-from-bottom-4 duration-300 border border-border"
+            className="bg-card rounded-xl p-6 max-w-md w-full shadow-2xl animate-in slide-in-from-bottom-4 duration-300 border border-border"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-4">
-              <h2 id="preview-modal-title" className="text-lg text-foreground font-bold">Exercise Preview</h2>
+              <h2 id="preview-modal-title" className="text-lg text-foreground font-bold">Preview</h2>
               <button
                 ref={previewCloseRef}
                 onClick={() => setPreviewExercise(null)}
@@ -388,7 +315,7 @@ export function ExerciseLibrary({ onStartRoutine }: ExerciseLibraryProps) {
             </div>
             <button
               onClick={() => setPreviewExercise(null)}
-              className="w-full bg-primary text-primary-foreground py-2.5 rounded-lg hover:bg-primary-hover active:scale-95 transition-all duration-200 font-semibold shadow-md"
+              className="w-full bg-primary text-primary-foreground py-3 rounded-lg hover:bg-primary-hover active:scale-95 transition-all duration-200 font-semibold"
             >
               Close
             </button>
