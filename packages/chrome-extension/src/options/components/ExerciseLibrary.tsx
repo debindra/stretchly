@@ -140,7 +140,7 @@ export function ExerciseLibrary({ onStartRoutine }: ExerciseLibraryProps) {
                 {ex.name}
                 <button
                   onClick={() => toggleExerciseInRoutine(ex)}
-                  className="hover:text-white/80 transition-colors ml-1"
+                  className="cursor-pointer hover:text-white hover:bg-white/20 rounded-full w-5 h-5 flex items-center justify-center transition-all duration-200 ml-1 active:scale-90"
                   aria-label={`Remove ${ex.name}`}
                 >
                   ×
@@ -251,7 +251,7 @@ export function ExerciseLibrary({ onStartRoutine }: ExerciseLibraryProps) {
                   <ol className="mt-3 space-y-2 text-sm text-muted-foreground pl-4">
                     {exercise.instructions.map((instruction, idx) => (
                       <li key={idx} className="flex gap-2">
-                        <span className="text-primary font-semibold flex-shrink-0">{idx + 1}.</span>
+                        <span className="text-primary font-semibold shrink-0">{idx + 1}.</span>
                         <span>{instruction}</span>
                       </li>
                     ))}
