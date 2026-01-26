@@ -52,6 +52,7 @@ export const chromeStorageAdapter: StorageAdapter = {
         reminderInterval: typeof parsed.reminderInterval === 'number' ? parsed.reminderInterval : DEFAULT_SETTINGS.reminderInterval,
         remindersEnabled: typeof parsed.remindersEnabled === 'boolean' ? parsed.remindersEnabled : DEFAULT_SETTINGS.remindersEnabled,
         preferredDuration: typeof parsed.preferredDuration === 'number' ? parsed.preferredDuration : DEFAULT_SETTINGS.preferredDuration,
+        theme: parsed.theme === 'fast-wellness' || parsed.theme === 'calm' || parsed.theme === 'energizer' ? parsed.theme : DEFAULT_SETTINGS.theme,
       };
     } catch {
       return { ...DEFAULT_SETTINGS };

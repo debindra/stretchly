@@ -15,10 +15,13 @@ export interface ReliefEntry {
   exerciseIds: string[];
 }
 
+export type Theme = 'fast-wellness' | 'calm' | 'energizer';
+
 export interface UserSettings {
   reminderInterval: number; // in minutes
   remindersEnabled: boolean;
   preferredDuration: number; // in minutes
+  theme: Theme;
 }
 
 export type View = 'dashboard' | 'library' | 'progress' | 'settings';

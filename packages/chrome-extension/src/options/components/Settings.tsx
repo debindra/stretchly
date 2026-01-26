@@ -1,7 +1,8 @@
-import type { UserSettings } from '@stretchly/shared';
+import type { UserSettings, Theme } from '@stretchly/shared';
 import * as Switch from '@radix-ui/react-switch';
-import { Bell, Clock, Trash2, Info, Lightbulb } from 'lucide-react';
+import { Bell, Clock, Trash2, Info, Lightbulb, Palette } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
+import { getThemeDisplayName, getThemeDescription, themes } from '../../utils/themes';
 
 interface SettingsProps {
   settings: UserSettings;
@@ -39,8 +40,65 @@ export function Settings({ settings, onUpdateSettings, onClearRelief }: Settings
 
   const reminderPresets = [1, 15, 30, 45, 60, 90, 120];
 
+  const themeOptions: Theme[] = ['fast-wellness', 'calm', 'energizer'];
+
   return (
     <div className="space-y-4 md:space-y-6">
+      {/* Theme Selection */}
+      <div className="bg-card rounded-xl p-6 md:p-7 shadow-sm border border-border">
+        <div className="flex items-center gap-4 mb-6">
+          <div className="w-11 h-11 bg-primary/10 rounded-lg flex items-center justify-center">
+            <Palette className="w-5 h-5 text-primary" />
+          </div>
+          <div>
+            <h2 className="text-foreground text-lg font-bold">Theme</h2>
+            <p className="text-muted-foreground text-sm mt-1">Choose your visual style</p>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          {themeOptions.map((theme) => {
+            const colors = themes[theme];
+            const isSelected = settings.theme === theme;
+            return (
+              <button
+                key={theme}
+                onClick={() => onUpdateSettings({ ...settings, theme })}
+                className={`w-full p-4 rounded-xl border-2 transition-all duration-200 text-left ${
+                  isSelected
+                    ? 'border-primary bg-primary/5 shadow-sm ring-2 ring-primary/20'
+                    : 'border-border hover:border-primary/40 active:scale-95'
+                }`}
+              >
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0">
+                    <div className="w-12 h-12 rounded-lg flex items-center justify-center" style={{ backgroundColor: colors.primary }}>
+                      <div className="w-6 h-6 rounded" style={{ backgroundColor: colors.accent }} />
+                    </div>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-1">
+                      <h3 className="text-foreground font-semibold text-sm">{getThemeDisplayName(theme)}</h3>
+                      {isSelected && (
+                        <span className="px-2 py-0.5 bg-primary/10 text-primary rounded text-xs font-medium">
+                          Active
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-muted-foreground text-xs mb-2">{getThemeDescription(theme)}</p>
+                    <div className="flex gap-1.5">
+                      <div className="w-4 h-4 rounded" style={{ backgroundColor: colors.primary }} title="Primary" />
+                      <div className="w-4 h-4 rounded" style={{ backgroundColor: colors.secondary }} title="Secondary" />
+                      <div className="w-4 h-4 rounded" style={{ backgroundColor: colors.accent }} title="Accent" />
+                    </div>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Reminders - Enhanced */}
       <div className="bg-card rounded-xl p-6 md:p-7 shadow-sm border border-border">
         <div className="flex items-center gap-4 mb-6">

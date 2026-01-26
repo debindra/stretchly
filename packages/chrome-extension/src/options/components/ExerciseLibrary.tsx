@@ -254,22 +254,23 @@ export function ExerciseLibrary({ onStartRoutine }: ExerciseLibraryProps) {
           return (
             <div
               key={exercise.id}
-              className={`bg-card rounded-xl p-5 shadow-sm border-2 transition-all duration-200 hover:shadow-md ${
+              className={`bg-card rounded-lg p-5 shadow-sm border transition-all duration-200 hover:shadow-lg hover:scale-[1.02] hover:bg-card/50 flex flex-col h-full ${
                 isSelected
                   ? 'border-primary shadow-md'
                   : 'border-border hover:border-primary/40'
               }`}
             >
-              <div className="flex items-start justify-between mb-4">
+              {/* Header - fixed at top */}
+              <div className="flex items-start justify-between mb-4 shrink-0">
                 <span className="px-3 py-1.5 bg-primary/10 text-primary rounded-full text-xs font-medium">
                   {exercise.category}
                 </span>
                 <button
                   onClick={() => toggleExerciseInRoutine(exercise)}
-                  className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-200 ${
+                  className={`w-8 h-8 rounded-md flex items-center justify-center transition-all duration-200 focus-subtle ${
                     isSelected
-                      ? 'bg-primary text-primary-foreground shadow-sm'
-                      : 'bg-muted text-muted-foreground hover:bg-primary/10 active:scale-95'
+                      ? 'bg-primary text-primary-foreground shadow-sm hover:bg-primary-hover hover:scale-110'
+                      : 'bg-muted text-muted-foreground hover:bg-primary hover:text-white hover:scale-110 active:scale-95'
                   }`}
                   aria-label={isSelected ? `Remove ${exercise.name}` : `Add ${exercise.name}`}
                 >
@@ -277,36 +278,40 @@ export function ExerciseLibrary({ onStartRoutine }: ExerciseLibraryProps) {
                 </button>
               </div>
 
-              <h3 className="text-foreground mb-2 text-base font-semibold">{exercise.name}</h3>
-              <p className="text-muted-foreground text-sm mb-4 leading-relaxed">{exercise.description}</p>
+              {/* Content area - grows to fill space */}
+              <div className="grow flex flex-col">
+                <h3 className="text-foreground mb-2 text-base font-semibold">{exercise.name}</h3>
+                <p className="text-muted-foreground text-sm mb-4 leading-relaxed">{exercise.description}</p>
 
-              <div className="flex items-center gap-2 text-muted-foreground text-sm mb-4">
-                <Clock className="w-4 h-4" />
-                <span className="font-medium">{exercise.duration}s</span>
+                <div className="flex items-center gap-2 text-muted-foreground text-sm mb-4">
+                  <Clock className="w-4 h-4" />
+                  <span className="font-medium">{exercise.duration}s</span>
+                </div>
+
+                <details className="mb-4">
+                  <summary className="text-primary text-sm cursor-pointer hover:text-primary-hover font-medium transition-colors">
+                    View instructions
+                  </summary>
+                  <ol className="mt-3 space-y-2 text-sm text-muted-foreground pl-4">
+                    {exercise.instructions.map((instruction, idx) => (
+                      <li key={idx} className="flex gap-2">
+                        <span className="text-primary font-semibold flex-shrink-0">{idx + 1}.</span>
+                        <span>{instruction}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </details>
               </div>
 
-              <details className="mb-4">
-                <summary className="text-primary text-sm cursor-pointer hover:text-primary-hover font-medium transition-colors">
-                  View instructions
-                </summary>
-                <ol className="mt-3 space-y-2 text-sm text-muted-foreground pl-4">
-                  {exercise.instructions.map((instruction, idx) => (
-                    <li key={idx} className="flex gap-2">
-                      <span className="text-primary font-semibold flex-shrink-0">{idx + 1}.</span>
-                      <span>{instruction}</span>
-                    </li>
-                  ))}
-                </ol>
-              </details>
-
+              {/* Button - fixed at bottom */}
               <button
                 onClick={(e) => {
                   previewOpenerRef.current = e.currentTarget;
                   setPreviewExercise(exercise.id);
                 }}
-                className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground px-4 py-2.5 rounded-lg hover:bg-primary-hover active:scale-95 transition-all duration-200 font-medium shadow-sm hover:shadow-md text-sm"
+                className="w-full flex items-center justify-center gap-2 border border-primary text-primary bg-transparent hover:bg-primary hover:text-white active:scale-95 transition-all duration-200 font-medium px-4 py-2.5 rounded-md hover:shadow-md text-sm focus-prominent shrink-0"
               >
-                <Play className="w-4 h-4" />
+                <Play className="w-4 h-4 text-current" />
                 Watch animation
               </button>
             </div>

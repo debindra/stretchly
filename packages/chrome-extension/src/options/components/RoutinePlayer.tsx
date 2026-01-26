@@ -156,7 +156,7 @@ export function RoutinePlayer({
   const progressPercentage = duration > 0 ? (timeRemaining / duration) * 100 : 0;
 
   return (
-    <div className="h-screen bg-background p-3 md:p-4 overflow-hidden flex flex-col">
+    <div className="h-screen bg-background p-3 md:p-4 flex flex-col">
       <div className="max-w-3xl mx-auto w-full flex flex-col flex-1">
         {/* Progress bar + cancel - Enhanced */}
         <div className="flex items-center justify-between mb-3 md:mb-4">
@@ -300,7 +300,7 @@ export function RoutinePlayer({
           {/* Instructions - Step by step cards */}
           <div className="mt-4 md:mt-6">
             <h3 className="text-foreground text-sm md:text-base font-semibold mb-3">Step-by-step instructions</h3>
-            <div className="space-y-2.5 max-h-[200px] md:max-h-[240px] overflow-y-auto pr-2">
+            <div className="space-y-2.5 max-h-[200px] md:max-h-[240px] pr-2">
               {currentExercise.instructions.map((instruction, idx) => (
                 <div 
                   key={idx} 

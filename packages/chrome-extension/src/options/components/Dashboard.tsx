@@ -107,7 +107,7 @@ export function Dashboard({ onStartRoutine, reliefData, settings }: DashboardPro
   };
 
   return (
-    <div className="space-y-4 md:space-y-6 h-full overflow-y-auto pr-1">
+    <div className="space-y-4 md:space-y-6 h-full">
       {/* Hero Stat - Today's Focus - Simplified */}
       {todaySessions > 0 && (
         <div className="bg-gradient-primary rounded-xl p-5 text-white shadow-lg">
@@ -170,13 +170,13 @@ export function Dashboard({ onStartRoutine, reliefData, settings }: DashboardPro
 
       {/* Pain-First Entry - Enhanced */}
       <div ref={painAreaSectionRef} className="bg-card rounded-xl p-4 md:p-6 shadow-sm border border-border">
-        <div className="mb-4 md:mb-6 text-center">
-          <h2 className="text-lg md:text-xl text-foreground mb-1.5 font-bold">What&apos;s bothering you?</h2>
+        <div className="mb-3 md:mb-4 text-center">
+          <h2 className="text-lg md:text-xl text-foreground mb-1 font-bold">What&apos;s bothering you?</h2>
           <p className="text-muted-foreground text-xs md:text-sm">Select an area, then rate your pain to get instant relief</p>
         </div>
 
         {/* Pain Area Selection - Enhanced with better spacing */}
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4 mb-4 md:mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 md:gap-3 mb-3 md:mb-4">
           {painAreas.map(area => {
             const isSelected = selectedPain === area.key;
             const routineDuration = Math.round(
@@ -192,14 +192,14 @@ export function Dashboard({ onStartRoutine, reliefData, settings }: DashboardPro
                   setSelectedPain(area.key);
                   if (!isSelected) setPainLevel(5);
                 }}
-                className={`p-3 md:p-4 rounded-lg border-2 transition-all duration-200 text-left transform hover:scale-[1.02] active:scale-[0.98] min-h-[100px] md:min-h-[120px] flex flex-col ${
+                className={`p-2.5 md:p-3 rounded-lg border-2 transition-all duration-200 text-left transform hover:scale-[1.02] active:scale-[0.98] min-h-[80px] md:min-h-[95px] flex flex-col ${
                   isSelected
                     ? 'border-primary bg-primary/10 shadow-md ring-2 ring-primary/20'
                     : 'border-border hover:border-primary/40 bg-background hover:shadow-sm'
                 }`}
                 aria-pressed={isSelected}
               >
-                <div className={`w-10 h-10 md:w-12 md:h-12 rounded-lg flex items-center justify-center mb-2 transition-all overflow-hidden flex-shrink-0 ${
+                <div className={`w-8 h-8 md:w-10 md:h-10 rounded-lg flex items-center justify-center mb-1.5 transition-all overflow-hidden flex-shrink-0 ${
                   isSelected ? 'bg-primary/20' : 'bg-muted'
                 }`}>
                   <img 
@@ -207,12 +207,12 @@ export function Dashboard({ onStartRoutine, reliefData, settings }: DashboardPro
                     alt={area.label}
                     width={48}
                     height={48}
-                    className="w-full h-full object-contain p-1.5"
+                    className="w-full h-full object-contain p-1"
                   />
                 </div>
                 <div className="flex-1 flex flex-col">
-                  <h3 className="text-foreground mb-1 text-sm md:text-base font-semibold">{area.label}</h3>
-                  <p className="text-muted-foreground text-xs leading-tight mb-2 flex-1">{area.description}</p>
+                  <h3 className="text-foreground mb-0.5 text-sm md:text-base font-semibold">{area.label}</h3>
+                  <p className="text-muted-foreground text-xs leading-tight mb-1.5 flex-1">{area.description}</p>
                   <div className="flex items-center gap-1.5 text-muted-foreground text-xs">
                     <Clock className="w-3 h-3" />
                     <span>{routineDuration}s</span>
@@ -225,7 +225,7 @@ export function Dashboard({ onStartRoutine, reliefData, settings }: DashboardPro
 
         {/* Pain Level - Only shown when area is selected */}
         {selectedPain && (
-          <div className="bg-muted rounded-lg p-4 border border-primary/30 bg-primary/5 transition-all duration-200 animate-in fade-in slide-in-from-bottom-2">
+          <div className="bg-muted rounded-lg p-3 border border-primary/30 bg-primary/5 transition-all duration-200 animate-in fade-in slide-in-from-bottom-2">
             <p id="dashboard-pain-hint" className="text-muted-foreground text-xs mb-2">Rate your discomfort (1 = mild, 10 = severe).</p>
             <PainScale
               id="dashboard-pain-level"
@@ -242,10 +242,10 @@ export function Dashboard({ onStartRoutine, reliefData, settings }: DashboardPro
 
         {/* Enhanced Primary CTA */}
         {selectedPain && (
-          <div className="mt-4 md:mt-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <div className="mt-3 md:mt-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
             <button
               onClick={handleStartRelief}
-              className="w-full bg-accent text-accent-foreground py-4 md:py-5 rounded-lg hover:bg-accent active:scale-[0.98] transition-all duration-200 shadow-lg hover:shadow-xl font-bold text-base md:text-lg"
+              className="w-full bg-accent text-accent-foreground py-3 md:py-4 rounded-lg hover:bg-accent active:scale-[0.98] transition-all duration-200 shadow-lg hover:shadow-xl font-bold text-base md:text-lg"
             >
               <span className="flex items-center justify-center gap-2">
                 <Zap className="w-5 h-5" />
@@ -331,7 +331,7 @@ export function Dashboard({ onStartRoutine, reliefData, settings }: DashboardPro
       )}
 
       {/* First-time Empty State - Simplified & More Actionable */}
-      {reliefData.length === 0 && (
+      {/* {reliefData.length === 0 && (
         <div className="bg-gradient-to-br from-primary/5 to-primary/10 rounded-xl p-5 md:p-6 text-center border border-primary/20">
           <div className="w-14 h-14 bg-primary/20 rounded-full flex items-center justify-center mx-auto mb-3">
             <Zap className="w-7 h-7 text-primary" />
@@ -342,13 +342,13 @@ export function Dashboard({ onStartRoutine, reliefData, settings }: DashboardPro
           </p>
           <button
             type="button"
-            onClick={() => painAreaSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+            onClick={() => painAreaSectionRef.current?.focus()}
             className="px-5 py-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary-hover active:scale-[0.98] transition-all font-medium text-sm shadow-sm"
           >
             Choose your first area
           </button>
         </div>
-      )}
+      )} */}
     </div>
   );
 }

@@ -228,12 +228,27 @@ button:active {
   transition: transform 0.1s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Enhanced focus states for accessibility */
+/* Enhanced focus states for accessibility - refined for better UX */
 button:focus-visible,
 input:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
+  outline: 1.5px solid var(--primary);
+  outline-offset: 1px;
   border-radius: 4px;
+  transition: outline 0.15s ease-out;
+}
+
+/* Refined focus states for button hierarchy - subtle for secondary actions */
+button.focus-subtle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--background), 0 0 0 2px var(--primary);
+  transition: box-shadow 0.15s ease-out;
+}
+
+/* More prominent focus for primary actions */
+button.focus-prominent:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--primary);
+  transition: box-shadow 0.15s ease-out;
 }
 
 /* Smooth transitions for all interactive elements - refined timing */

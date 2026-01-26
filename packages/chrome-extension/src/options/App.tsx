@@ -9,6 +9,7 @@ import { ProgressTracker } from './components/ProgressTracker';
 import { Settings } from './components/Settings';
 import { Activity, Library, TrendingUp, Settings as SettingsIcon, AlertCircle } from 'lucide-react';
 import { LogoImg } from '../components/LogoImg';
+import { applyTheme } from '../utils/themes';
 
 const storage = chromeStorageAdapter;
 
@@ -57,6 +58,12 @@ export default function App() {
       console.error('Error saving settings:', err);
     });
   }, [settings, loading]);
+
+  // Apply theme when settings change or on initial load
+  useEffect(() => {
+    if (loading) return;
+    applyTheme(settings.theme);
+  }, [settings.theme, loading]);
 
   // Hash routing: initial view from #dashboard, #library, etc.
   useEffect(() => {
@@ -192,7 +199,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-background overflow-hidden">
+    <div className="min-h-screen bg-background">
       <div className="max-w-5xl mx-auto px-3 md:px-4 py-3 md:py-4 h-screen flex flex-col">
         <header className="mb-2 md:mb-3 flex-shrink-0">
           <LogoImg height={28} maxWidth={160} className="mb-1" />
@@ -202,7 +209,7 @@ export default function App() {
         </header>
 
         <nav 
-          className="bg-card rounded-lg shadow-sm border border-border mb-3 md:mb-4 p-1 flex gap-1 flex-shrink-0" 
+          className="bg-card rounded-lg shadow-sm border border-border mb-3 md:mb-4 px-1 py-1 flex gap-1 flex-shrink-0" 
           role="tablist" 
           aria-label="Main navigation"
         >
@@ -305,7 +312,7 @@ export default function App() {
         </nav>
 
         <main 
-          className="flex-1 min-h-0 overflow-y-auto pr-1 md:pr-2" 
+          className="flex-1 min-h-0 px-1" 
           role="tabpanel"
           id={`${currentView}-panel`}
           aria-labelledby={`${currentView}-tab`}
