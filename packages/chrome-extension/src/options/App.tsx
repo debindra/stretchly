@@ -73,9 +73,22 @@ export default function App() {
     if (hash && views.includes(hash as View)) setCurrentView(hash as View);
   }, [loading]);
 
+  // Prevent automatic scrolling when hash changes
+  useEffect(() => {
+    const handleHashChange = () => {
+      // Prevent scroll to top when hash changes
+      window.scrollTo(0, 0);
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
   const navigateTo = useCallback((v: View) => {
     setCurrentView(v);
-    window.location.hash = v;
+    // Use replaceState to prevent scroll restoration
+    const url = new URL(window.location.href);
+    url.hash = v;
+    window.history.replaceState(null, '', url.toString());
   }, []);
 
   // Keyboard navigation: Alt+1–4 and Arrow Left/Right
@@ -199,8 +212,8 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="max-w-5xl mx-auto px-3 md:px-4 py-3 md:py-4 h-screen flex flex-col">
+    <div className="min-h-screen bg-background overflow-hidden">
+      <div className="max-w-5xl mx-auto px-3 md:px-4 py-3 md:py-4 h-screen flex flex-col overflow-hidden">
         <header className="mb-2 md:mb-3 flex-shrink-0">
           <LogoImg height={28} maxWidth={160} className="mb-1" />
           <p className="text-muted-foreground text-xs font-medium hidden md:block">
@@ -312,7 +325,7 @@ export default function App() {
         </nav>
 
         <main 
-          className="flex-1 min-h-0 px-1" 
+          className="flex-1 min-h-0 px-1 overflow-y-auto" 
           role="tabpanel"
           id={`${currentView}-panel`}
           aria-labelledby={`${currentView}-tab`}
