@@ -325,7 +325,9 @@ export default function App() {
         </nav>
 
         <main 
-          className="flex-1 min-h-0 px-1 overflow-y-auto" 
+          className={`flex-1 min-h-0 px-1 scroll-smooth ${
+            currentView === 'dashboard' ? 'overflow-hidden' : 'overflow-y-auto'
+          }`}
           role="tabpanel"
           id={`${currentView}-panel`}
           aria-labelledby={`${currentView}-tab`}

@@ -74,89 +74,82 @@ async function syncReminderAlarm(): Promise<void> {
   }
 }
 
-async function showReminderNotification(): Promise<void> {
+async function showReminderNotification(): Promise<{ success: boolean; error?: string }> {
   try {
-    // First, try with icon
+    // First check notification permission level
+    const permissionLevel = await new Promise<string>((resolve) => {
+      chrome.notifications.getPermissionLevel((level) => {
+        resolve(level);
+      });
+    });
+    
+    console.log('[Stretchly] Notification permission level:', permissionLevel);
+    
+    if (permissionLevel !== 'granted') {
+      console.error('[Stretchly] ❌ Notifications not permitted. Level:', permissionLevel);
+      return { 
+        success: false, 
+        error: `Notifications blocked. Check Chrome settings and macOS System Settings > Notifications > Google Chrome` 
+      };
+    }
+
+    // Get icon URL - using the extension's icon
     const iconUrl = chrome.runtime.getURL('icons/icon128.png');
     console.log('[Stretchly] Creating notification with icon:', iconUrl);
     
-    // Use Promise-based API for better error handling
-    try {
-      const notificationId = await new Promise<string>((resolve, reject) => {
-        chrome.notifications.create(
-          {
-            type: 'basic',
-            iconUrl,
-            title: 'Stretchly',
-            message: "Time for a quick stretch — check in on your body!",
-            requireInteraction: false,
-            silent: false,
-          },
-          (id) => {
-            if (chrome.runtime.lastError) {
-              reject(new Error(chrome.runtime.lastError.message));
-            } else {
-              resolve(id || '');
-            }
-          }
-        );
-      });
-      console.log('[Stretchly] ✅ Notification created successfully:', notificationId);
-      return;
-    } catch (iconError) {
-      console.warn('[Stretchly] Notification with icon failed:', iconError);
-      // Fallback: try without icon
-    }
+    // Create notification with unique ID to prevent duplicates
+    const notificationId = 'stretchly-reminder-' + Date.now();
     
-    // Fallback: try without icon
+    const notificationOptions: chrome.notifications.NotificationOptions = {
+      type: 'basic',
+      iconUrl,
+      title: 'Time to Stretch!',
+      message: "Take a quick break and check in on your body.",
+      priority: 2,
+      requireInteraction: false,
+      silent: false,
+    };
+
     try {
-      const notificationId = await new Promise<string>((resolve, reject) => {
-        chrome.notifications.create(
-          {
-            type: 'basic',
-            title: 'Stretchly',
-            message: "Time for a quick stretch — check in on your body!",
-            requireInteraction: false,
-            silent: false,
-          },
-          (id) => {
-            if (chrome.runtime.lastError) {
-              reject(new Error(chrome.runtime.lastError.message));
-            } else {
-              resolve(id || '');
-            }
+      const id = await new Promise<string>((resolve, reject) => {
+        chrome.notifications.create(notificationId, notificationOptions, (createdId) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+          } else {
+            resolve(createdId || notificationId);
           }
-        );
-      });
-      console.log('[Stretchly] ✅ Fallback notification created:', notificationId);
-    } catch (fallbackError) {
-      console.error('[Stretchly] ❌ Both notification attempts failed:', fallbackError);
-      // Last resort: try using when parameter
-      try {
-        const notificationId = await new Promise<string>((resolve, reject) => {
-          chrome.notifications.create(
-            'stretchly-reminder-' + Date.now(),
-            {
-              type: 'basic',
-              title: 'Stretchly',
-              message: "Time for a quick stretch — check in on your body!",
-            },
-            (id) => {
-              if (chrome.runtime.lastError) {
-                reject(new Error(chrome.runtime.lastError.message));
-              } else {
-                resolve(id || '');
-              }
-            }
-          );
         });
-        console.log('[Stretchly] ✅ Notification with ID created:', notificationId);
-      } catch (finalError) {
-        console.error('[Stretchly] ❌ All notification methods failed:', finalError);
+      });
+      
+      console.log('[Stretchly] ✅ Notification API returned ID:', id);
+      
+      // Verify the notification exists
+      const exists = await new Promise<boolean>((resolve) => {
+        chrome.notifications.getAll((notifications) => {
+          console.log('[Stretchly] Active notifications:', Object.keys(notifications));
+          resolve(id in notifications);
+        });
+      });
+      
+      if (exists) {
+        console.log('[Stretchly] ✅ Notification verified as active');
+        return { success: true };
+      } else {
+        console.warn('[Stretchly] ⚠️ Notification was created but not found in active list');
+        console.warn('[Stretchly] This usually means macOS is blocking Chrome notifications.');
+        console.warn('[Stretchly] Fix: System Settings > Notifications > Google Chrome > Allow Notifications');
+        return { 
+          success: false, 
+          error: 'Notification created but blocked by system. Enable notifications for Chrome in macOS System Settings > Notifications > Google Chrome' 
+        };
       }
+    } catch (error) {
+      console.error('[Stretchly] Notification creation failed:', error);
+      return { success: false, error: String(error) };
     }
   } catch (e) {
     console.error('[Stretchly] ❌ Error in showReminderNotification:', e);
+    return { success: false, error: String(e) };
   }
 }
 
@@ -234,8 +227,8 @@ chrome.runtime.onMessage.addListener(
     }
     if (msg.type === 'TEST_NOTIFICATION') {
       console.log('[Stretchly] Received TEST_NOTIFICATION message');
-      void showReminderNotification().then(() => {
-        sendResponse({ ok: true });
+      void showReminderNotification().then((result) => {
+        sendResponse({ ok: result.success, sent: result.success, error: result.error });
       });
       return true; // Fixed: return true when using sendResponse
     }
@@ -248,6 +241,27 @@ chrome.runtime.onMessage.addListener(
           scheduledTime: a.scheduledTime ? new Date(a.scheduledTime).toISOString() : null,
           periodInMinutes: a.periodInMinutes,
         })) });
+      });
+      return true;
+    }
+    if (msg.type === 'GET_ALARM_STATUS') {
+      // Get current alarm status for UI display
+      Promise.all([
+        chrome.alarms.get(ALARM_NAME),
+        getSettings(),
+        checkNotificationPermission(),
+      ]).then(([alarm, settings, hasNotificationPermission]) => {
+        const status = {
+          alarmExists: !!alarm,
+          nextFireTime: alarm?.scheduledTime ? new Date(alarm.scheduledTime).toISOString() : null,
+          nextFireIn: alarm?.scheduledTime ? Math.round((alarm.scheduledTime - Date.now()) / 1000) : null,
+          periodInMinutes: alarm?.periodInMinutes ?? null,
+          remindersEnabled: settings.remindersEnabled,
+          reminderInterval: settings.reminderInterval,
+          hasNotificationPermission,
+        };
+        console.log('[Stretchly] Alarm status:', status);
+        sendResponse(status);
       });
       return true;
     }
