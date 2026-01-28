@@ -182,13 +182,13 @@ export function ExerciseLibrary({ onStartRoutine }: ExerciseLibraryProps) {
               <button
                 ref={launchModalCancelRef}
                 onClick={() => setShowLaunchModal(false)}
-                className="flex-1 bg-muted text-foreground py-3 rounded-lg hover:bg-primary/10 active:scale-95 transition-all duration-200 font-medium"
+                className="flex-1 bg-muted text-foreground py-3 rounded-lg hover:bg-primary/10 active:scale-95 transition-all duration-200 font-medium cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 onClick={startCustomRoutine}
-                className="flex-1 bg-accent text-accent-foreground py-3 rounded-lg hover:bg-accent active:scale-95 transition-all duration-200 shadow-lg font-semibold"
+                className="flex-1 bg-accent text-accent-foreground py-3 rounded-lg hover:bg-accent active:scale-95 transition-all duration-200 shadow-lg font-semibold cursor-pointer"
               >
                 Start
               </button>
@@ -304,7 +304,7 @@ export function ExerciseLibrary({ onStartRoutine }: ExerciseLibraryProps) {
               <button
                 ref={previewCloseRef}
                 onClick={() => setPreviewExercise(null)}
-                className="w-8 h-8 bg-muted rounded-full flex items-center justify-center hover:bg-primary/10 active:scale-95 transition-all text-lg text-foreground"
+                className="w-8 h-8 bg-muted rounded-full flex items-center justify-center hover:bg-primary/10 hover:text-primary active:scale-95 transition-all text-lg text-foreground cursor-pointer"
                 aria-label="Close preview"
               >
                 ×
@@ -315,7 +315,7 @@ export function ExerciseLibrary({ onStartRoutine }: ExerciseLibraryProps) {
             </div>
             <button
               onClick={() => setPreviewExercise(null)}
-              className="w-full bg-primary text-primary-foreground py-3 rounded-lg hover:bg-primary-hover active:scale-95 transition-all duration-200 font-semibold"
+              className="w-full bg-primary text-primary-foreground py-3 rounded-lg hover:bg-primary-hover active:scale-95 transition-all duration-200 font-semibold cursor-pointer"
             >
               Close
             </button>

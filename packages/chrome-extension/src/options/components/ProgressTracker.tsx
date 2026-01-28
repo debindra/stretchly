@@ -255,24 +255,30 @@ export function ProgressTracker({ reliefData, onNavigateToDashboard }: ProgressT
           <div>
             <h3 className="text-foreground mb-3 text-base font-bold">Pain Areas</h3>
             <div className="space-y-3">
-              {Object.entries(painAreaBreakdown).map(([area, count]) => {
-                const percentage = (count / maxPainCount) * 100;
+              {Object.keys(painAreaBreakdown).length === 0 ? (
+                <div className="text-xs md:text-sm text-muted-foreground bg-muted/40 border border-dashed border-border rounded-lg px-3 py-3">
+                  Once you log a few routines, your most common pain areas will appear here.
+                </div>
+              ) : (
+                Object.entries(painAreaBreakdown).map(([area, count]) => {
+                  const percentage = (count / maxPainCount) * 100;
 
-                return (
-                  <div key={area}>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-foreground text-sm">{formatPainArea(area)}</span>
-                      <span className="text-muted-foreground text-sm">{count}</span>
+                  return (
+                    <div key={area}>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-foreground text-sm">{formatPainArea(area)}</span>
+                        <span className="text-muted-foreground text-sm">{count}</span>
+                      </div>
+                      <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                        <div
+                          className="h-full bg-primary transition-all duration-500"
+                          style={{ width: `${percentage}%` }}
+                        />
+                      </div>
                     </div>
-                    <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
-                      <div
-                        className="h-full bg-primary transition-all duration-500"
-                        style={{ width: `${percentage}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </div>
         </div>
