@@ -1,0 +1,10 @@
+{
+  "appName": {
+    "message": "Stretchly",
+    "description": "Extension name shown in Chrome and the Web Store."
+  },
+  "appDescription": {
+    "message": "Instant relief for desk workers — in under 2 minutes",
+    "description": "Extension description shown in Chrome and the Web Store."
+  }
+}

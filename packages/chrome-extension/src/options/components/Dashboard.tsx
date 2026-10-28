@@ -1,139 +1,406 @@
-import { useState, useRef } from 'react';
-import type { Exercise, ReliefEntry, UserSettings } from '@stretchly/shared';
-import { exercises, painRoutines } from '@stretchly/shared';
-import {
-  Clock,
-} from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { Exercise, ReliefEntry } from '@stretchly/shared';
+import { painRoutines } from '@stretchly/shared';
+import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { PainScale } from './PainScale';
+import { ExerciseStill, hasAnimation } from './ExerciseAnimations';
+import { computeStreak } from '../utils/stats';
+import { formatPainArea, formatReliefDate, formatSeconds } from '../utils/formatDate';
+import { t, tp, type MessageKey } from '../../i18n';
+import { useLocale } from '../../i18n/react';
+import { exercisesFor, GENERAL_ROUTINES, totalSeconds } from '../utils/routines';
+import { PAIN_AREA_INFO, parseOptionsHash, type PainArea } from '../../utils/painAreas';
+import { sendMessage, type AlarmStatus } from '../../utils/runtime';
 
 interface DashboardProps {
-  onStartRoutine: (exercises: Exercise[], painArea: string, painLevel: number) => void;
   reliefData: ReliefEntry[];
-  settings: UserSettings;
+  remindersEnabled: boolean;
+  onStartRoutine: (exercises: Exercise[], painArea: string, painLevel: number) => void;
+  onOpenSettings: () => void;
 }
 
-type PainArea = 'neck' | 'shoulders' | 'wrists' | 'upperBack' | 'lowerBack' | 'eyes';
+/** Anything the dashboard can launch: a pain area or a full-body routine. */
+interface Choice {
+  id: string;
+  label: string;
+  /** Stored as the session's area, so Progress can group by it. */
+  area: string;
+  icon?: string;
+  description?: string;
+  exercises: Exercise[];
+  seconds: number;
+  /** Question above the before-rating. */
+  question: string;
+}
 
-export function Dashboard({ onStartRoutine, reliefData, settings }: DashboardProps) {
-  const [selectedPain, setSelectedPain] = useState<PainArea | null>(null);
-  const [painLevel, setPainLevel] = useState<number>(5);
-  const painAreaSectionRef = useRef<HTMLDivElement>(null);
+// Built per call so labels follow the current language.
+function areas(): Choice[] {
+  return PAIN_AREA_INFO.map((a) => {
+    const list = exercisesFor(painRoutines[a.key] ?? []);
+    return {
+      id: a.key,
+      label: formatPainArea(a.key),
+      area: a.key,
+      icon: a.icon,
+      description: t(`painArea.${a.key}.description` as MessageKey),
+      exercises: list,
+      seconds: totalSeconds(list),
+      question: t(`dashboard.question.${a.key}` as MessageKey),
+    };
+  });
+}
 
-  const painAreas: { key: PainArea; label: string; iconPath: string; description: string }[] = [
-    { key: 'neck', label: 'Neck', iconPath: '/icons/neck.png', description: 'Stiff or tight neck' },
-    { key: 'shoulders', label: 'Shoulders', iconPath: '/icons/shoulders.png', description: 'Tense, hunched shoulders' },
-    { key: 'wrists', label: 'Wrists', iconPath: '/icons/wrist.png', description: 'Typing strain or pain' },
-    { key: 'upperBack', label: 'Upper Back', iconPath: '/icons/upper-back.png', description: 'Between shoulder blades' },
-    { key: 'lowerBack', label: 'Lower Back', iconPath: '/icons/lower-back.png', description: 'Lower spine discomfort' },
-    { key: 'eyes', label: 'Eyes', iconPath: '/icons/eye.png', description: 'Screen fatigue' },
-  ];
+function breaks(): Choice[] {
+  return GENERAL_ROUTINES.map((r) => ({
+    id: r.key,
+    label: formatPainArea(r.key),
+    area: r.key,
+    exercises: r.exercises,
+    seconds: r.seconds,
+    question: t('dashboard.questionGeneral'),
+  }));
+}
 
-  const handleStartRelief = () => {
-    if (!selectedPain) return;
+const byId = (id: string | null) => [...areas(), ...breaks()].find((c) => c.id === id) ?? null;
 
-    const exerciseIds = painRoutines[selectedPain];
-    const exerciseList = exerciseIds
-      .map(id => exercises.find(ex => ex.id === id))
-      .filter((ex): ex is Exercise => ex !== undefined);
+/** Sessions needed before the full-body routines get their own row; until then a single link offers one. */
+const BREAKS_AFTER = 3;
 
-    onStartRoutine(exerciseList, selectedPain, painLevel);
-  };
+/** "today" and "yesterday" read better lowercase mid-sentence; real dates keep their capitals. */
+function areaFromHash(): PainArea | null {
+  return parseOptionsHash(window.location.hash).area;
+}
 
+export function Dashboard({ reliefData, remindersEnabled, onStartRoutine, onOpenSettings }: DashboardProps) {
+  useLocale();
+  const [notificationsBlocked, setNotificationsBlocked] = useState(false);
+
+  // Consume one-shot params (area, welcome) so a reload doesn't reapply them.
+  useEffect(() => {
+    if (window.location.hash.includes('?')) window.history.replaceState(null, '', '#dashboard');
+  }, []);
+
+  // Reminders are pointless if the system hides them; say so where people will see it.
+  useEffect(() => {
+    if (!remindersEnabled) return;
+    sendMessage<AlarmStatus>({ type: 'GET_ALARM_STATUS' })
+      .then((s) => setNotificationsBlocked(!!s && !s.hasNotificationPermission))
+      .catch(() => {});
+  }, [remindersEnabled]);
+
+  const warning = notificationsBlocked && (
+    <p className="mb-6 border-l-2 border-warning pl-3 text-sm">
+      {t('dashboard.v2.notificationsBlocked')}{' '}
+      <button type="button" onClick={onOpenSettings} className="text-primary underline underline-offset-2">
+        {t('dashboard.v2.fixInSettings')}
+      </button>
+    </p>
+  );
 
   return (
-    <div className="h-full flex flex-col">
-      {/* Pain Area Selection - Hero Element */}
-      <div ref={painAreaSectionRef} className={`bg-card rounded-xl shadow-sm border border-border flex flex-col transition-all duration-200 ${
-        selectedPain ? 'p-4 md:p-5' : 'p-6 md:p-8'
-      } ${selectedPain ? 'flex-1 min-h-0' : ''}`}>
-        {/* Pain Area Selection */}
-        <div className={`grid grid-cols-2 md:grid-cols-3 transition-all duration-200 ${
-          selectedPain ? 'gap-2 md:gap-3 mb-4' : 'gap-3 md:gap-4 mb-6'
-        }`}>
-          {painAreas.map(area => {
-            const isSelected = selectedPain === area.key;
-            const routineDuration = Math.round(
-              (painRoutines[area.key] || []).reduce((sum, id) => {
-                const ex = exercises.find(e => e.id === id);
-                return sum + (ex?.duration || 0);
-              }, 0)
-            );
-            return (
-              <button
-                key={area.key}
-                onClick={() => {
-                  setSelectedPain(area.key);
-                  if (!isSelected) setPainLevel(5);
-                }}
-                className={`rounded-lg border-2 transition-all duration-200 text-left flex flex-col cursor-pointer group ${
-                  selectedPain && !isSelected
-                    ? 'p-2 md:p-3 min-h-[80px] md:min-h-[90px]'
-                    : selectedPain && isSelected
-                    ? 'p-3 md:p-4 min-h-[90px] md:min-h-[100px]'
-                    : 'p-4 md:p-5 min-h-[100px] md:min-h-[120px]'
-                } ${
-                  isSelected
-                    ? 'border-primary bg-primary/10 shadow-md'
-                    : 'border-border hover:border-primary/40 hover:bg-primary/5 hover:shadow-md hover:scale-[1.02] bg-background active:scale-[0.98]'
-                }`}
-                aria-pressed={isSelected}
-              >
-                <div className={`rounded-lg flex items-center justify-center mb-2 transition-all overflow-hidden shrink-0 ${
-                  selectedPain ? 'w-10 h-10 md:w-12 md:h-12' : 'w-12 h-12 md:w-14 md:h-14'
-                } ${
-                  isSelected ? 'bg-primary/20' : 'bg-muted group-hover:bg-primary/10'
-                }`}>
-                  <img 
-                    src={area.iconPath} 
-                    alt={area.label}
-                    width={selectedPain ? 48 : 56}
-                    height={selectedPain ? 48 : 56}
-                    className="w-full h-full object-contain p-1.5"
-                  />
-                </div>
-                <div className="flex-1 flex flex-col">
-                  <h3 className={`text-foreground mb-1 font-semibold ${
-                    selectedPain ? 'text-sm md:text-base' : 'text-base md:text-lg'
-                  }`}>{area.label}</h3>
-                  <p className={`text-muted-foreground leading-relaxed mb-2 flex-1 ${
-                    selectedPain ? 'text-xs md:text-sm' : 'text-sm'
-                  }`}>{area.description}</p>
-                  <div className="flex items-center gap-1.5 text-muted-foreground text-xs md:text-sm">
-                    <Clock className="w-3 h-3 md:w-4 md:h-4" />
-                    <span>{routineDuration}s</span>
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
+    <>
+      {warning}
+      {reliefData.length === 0 ? (
+        <FirstRun onStartRoutine={onStartRoutine} />
+      ) : (
+        <Returning reliefData={reliefData} onStartRoutine={onStartRoutine} />
+      )}
+    </>
+  );
+}
 
-        {/* Pain Level */}
-        {selectedPain && (
-          <div className="mb-4 animate-in fade-in shrink-0">
-            <PainScale
-              id="dashboard-pain-level"
-              value={painLevel}
-              onChange={setPainLevel}
-              min={1}
-              max={10}
-              label="Pain level"
-              variant="mild-severe"
-              className="compact"
-            />
-          </div>
-        )}
+// ---------------------------------------------------------------------------
+// First visit: one question per screen.
+// ---------------------------------------------------------------------------
 
-        {/* Primary CTA */}
-        {selectedPain && (
-          <button
-            onClick={handleStartRelief}
-            className="w-full bg-accent text-accent-foreground py-3 md:py-4 rounded-lg hover:bg-accent active:scale-[0.98] transition-all duration-200 shadow-lg font-bold text-base md:text-lg shrink-0"
-          >
-            Start Relief Routine
-          </button>
-        )}
+/** The first-run picker shows five plain choices; upper and lower back are split on the next screen. */
+function firstRunPicks(): Choice[] {
+  return [
+    ...['neck', 'shoulders', 'wrists'].map((k) => byId(k)!),
+    { ...byId('upperBack')!, id: 'back', label: t('dashboard.v2.back'), description: t('dashboard.v2.backDescription') },
+    byId('eyes')!,
+  ];
+}
+
+function FirstRun({ onStartRoutine }: Pick<DashboardProps, 'onStartRoutine'>) {
+  // A link from the popup or a notification skips straight to rating that area.
+  const [step, setStep] = useState<'pick' | 'back' | 'rate'>(() => (areaFromHash() ? 'rate' : 'pick'));
+  const [choice, setChoice] = useState<Choice | null>(() => byId(areaFromHash()));
+  const [painLevel, setPainLevel] = useState(5);
+
+  const deskReset = byId('deskReset');
+  const rate = (c: Choice) => {
+    setChoice(c);
+    setPainLevel(5);
+    setStep('rate');
+  };
+
+  if (step === 'rate' && choice) {
+    return (
+      <div className="mx-auto max-w-md pt-6">
+        <button
+          type="button"
+          onClick={() => setStep(choice.id === 'upperBack' || choice.id === 'lowerBack' ? 'back' : 'pick')}
+          className="-ml-1 flex items-center gap-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ChevronLeft className="h-4 w-4" aria-hidden />
+          {choice.label}
+        </button>
+        <h1 className="mt-4 text-2xl font-semibold">{t('dashboard.v2.howBad')}</h1>
+        <PainScale
+          id="first-pain"
+          className="mt-6"
+          value={painLevel}
+          onChange={setPainLevel}
+          label={t('dashboard.v2.yourRating')}
+        />
+        <button
+          type="button"
+          onClick={() => onStartRoutine(choice.exercises, choice.area, painLevel)}
+          className="mt-8 w-full rounded-md bg-accent px-4 py-2.5 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent-hover"
+        >
+          {t('common.start')}
+        </button>
       </div>
+    );
+  }
+
+  if (step === 'back') {
+    return (
+      <div className="mx-auto max-w-md pt-6">
+        <button
+          type="button"
+          onClick={() => setStep('pick')}
+          className="-ml-1 flex items-center gap-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ChevronLeft className="h-4 w-4" aria-hidden />
+          {t('dashboard.v2.allAreas')}
+        </button>
+        <h1 className="mt-4 text-2xl font-semibold">{t('dashboard.v2.upperOrLower')}</h1>
+        <div className="mt-6 space-y-2">
+          {[byId('upperBack')!, byId('lowerBack')!].map((c) => (
+            <AreaRow key={c.id} choice={c} navigates onClick={() => rate(c)} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-xl pt-6">
+      <h1 className="text-2xl font-semibold">{t('common.whereDoesItHurt')}</h1>
+      <div className="mt-6 space-y-2">
+        {firstRunPicks().map((c) => (
+          <AreaRow key={c.id} choice={c} navigates onClick={() => (c.id === 'back' ? setStep('back') : rate(c))} />
+        ))}
+      </div>
+      {deskReset && (
+        <button
+          type="button"
+          onClick={() => rate(deskReset)}
+          className="mt-5 text-sm text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline"
+        >
+          {t('dashboard.v2.notSureFirst')}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One choice as a list row. When `children` is given the row is open and shows them
+ * underneath, inside the same card, so the routine appears right where you clicked.
+ */
+function AreaRow({
+  choice,
+  onClick,
+  meta,
+  children,
+  navigates = false,
+}: {
+  choice: Choice;
+  onClick: () => void;
+  meta?: string;
+  children?: ReactNode;
+  /** The row moves to another screen instead of expanding (first-run flow). */
+  navigates?: boolean;
+}) {
+  const open = children != null;
+  const ref = useRef<HTMLDivElement>(null);
+  // Bring the opened routine fully into view, without jumping if it already is.
+  useEffect(() => {
+    if (open) ref.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [open]);
+  return (
+    <div
+      ref={ref}
+      className={`scroll-my-6 overflow-hidden rounded-lg border bg-card transition-colors ${
+        open ? 'border-primary ring-1 ring-primary' : 'border-border hover:border-muted-foreground'
+      }`}
+    >
+      <button type="button" aria-expanded={navigates ? undefined : open} onClick={onClick} className="flex w-full items-center gap-4 p-2.5 pr-4 text-left">
+        {choice.icon && (
+          // Every cover shares one 480×360 canvas, so the figures line up down the list.
+          <span className="block h-16 w-[5.5rem] shrink-0 overflow-hidden rounded-md bg-muted">
+            <img src={choice.icon} alt="" width={480} height={360} loading="eager" className="h-full w-full object-contain p-1" />
+          </span>
+        )}
+        <span className="min-w-0 flex-1">
+          <span className="block font-medium">{choice.label}</span>
+          {choice.description && <span className="block text-sm text-muted-foreground">{choice.description}</span>}
+        </span>
+        {meta && <span className="text-xs tabular-nums text-muted-foreground">{meta}</span>}
+        {navigates ? (
+          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+        ) : (
+          <ChevronDown
+            className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`}
+            aria-hidden
+          />
+        )}
+      </button>
+      {children}
+    </div>
+  );
+}
+
+/** The routine for one choice: what you'll do, how you feel now, and Start. */
+function RoutineSection({ choice, onStart }: { choice: Choice; onStart: (painLevel: number) => void }) {
+  const [painLevel, setPainLevel] = useState(5);
+  return (
+    <div className="border-t border-border px-4 pb-4 pt-3">
+      <ol className="grid gap-2 sm:grid-cols-3">
+        {choice.exercises.map((ex, i) => (
+          <li key={ex.id} className="flex min-w-0 items-center gap-2 rounded-md border border-border bg-background p-2">
+            {hasAnimation(ex.id) && <ExerciseStill exerciseId={ex.id} className="h-14 w-16 shrink-0" />}
+            <span className="min-w-0">
+              <span className="block truncate text-xs font-medium">
+                {i + 1}. {ex.name}
+              </span>
+              <span className="block text-xs tabular-nums text-muted-foreground">{formatSeconds(ex.duration)}</span>
+            </span>
+          </li>
+        ))}
+      </ol>
+      <PainScale
+        id={`pain-${choice.id}`}
+        className="mt-4"
+        value={painLevel}
+        onChange={setPainLevel}
+        label={choice.question}
+        compact
+      />
+      <button
+        type="button"
+        onClick={() => onStart(painLevel)}
+        className="mt-4 rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent-hover"
+      >
+        {t('common.startRoutine')}
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Returning visits: choose on the left, start on the right.
+// ---------------------------------------------------------------------------
+
+function Returning({ reliefData, onStartRoutine }: Pick<DashboardProps, 'reliefData' | 'onStartRoutine'>) {
+  const AREAS = areas();
+  const BREAKS = breaks();
+  const deskReset = byId('deskReset');
+  const last = reliefData[reliefData.length - 1];
+  // Nothing is open until you pick, except when a link (popup, reminder) names an area.
+  const [selected, setSelected] = useState<string | null>(() => areaFromHash());
+  const [breaksOpen, setBreaksOpen] = useState(false);
+  const showBreaks = reliefData.length >= BREAKS_AFTER;
+  const streak = useMemo(() => computeStreak(reliefData), [reliefData]);
+
+  // Clicking the open row closes it; clicking another switches to it.
+  const toggle = (id: string) => setSelected((cur) => (cur === id ? null : id));
+  const section = (c: Choice) =>
+    selected === c.id ? <RoutineSection choice={c} onStart={(level) => onStartRoutine(c.exercises, c.area, level)} /> : undefined;
+
+  const lastLine =
+    last &&
+    (last.rated === false
+      ? t('dashboard.v2.lastTime', { what: formatPainArea(last.painArea, true), date: formatReliefDate(last.date, true) })
+      : t('dashboard.v2.lastTimeRated', {
+          what: formatPainArea(last.painArea, true),
+          date: formatReliefDate(last.date, true),
+          before: last.beforePain,
+          after: last.afterPain,
+        }));
+
+  return (
+    <div className="mx-auto max-w-2xl">
+      <div className="flex items-baseline justify-between gap-6">
+        <h1 className="text-2xl font-semibold">{t('common.whereDoesItHurt')}</h1>
+        {streak > 1 && <p className="text-sm text-muted-foreground">{tp('count.dayStreak', streak)}</p>}
+      </div>
+
+      <div className="mt-6 space-y-2">
+        {AREAS.map((a) => (
+          <AreaRow key={a.id} choice={a} meta={formatSeconds(a.seconds)} onClick={() => toggle(a.id)}>
+            {section(a)}
+          </AreaRow>
+        ))}
+      </div>
+
+      {showBreaks ? (
+        <div className="mt-2 overflow-hidden rounded-lg border border-border bg-card">
+          <button
+            type="button"
+            aria-expanded={breaksOpen}
+            onClick={() => setBreaksOpen((v) => !v)}
+            className="flex w-full items-center justify-between px-4 py-3 text-left"
+          >
+            <span className="font-medium">{t('dashboard.v2.fullBodyBreak')}</span>
+            <ChevronDown
+              className={`h-4 w-4 text-muted-foreground transition-transform ${breaksOpen ? 'rotate-180' : ''}`}
+              aria-hidden
+            />
+          </button>
+          {breaksOpen && (
+            <ul className="divide-y divide-border border-t border-border">
+              {BREAKS.map((b) => (
+                <li key={b.id}>
+                  <button
+                    type="button"
+                    aria-expanded={selected === b.id}
+                    onClick={() => toggle(b.id)}
+                    className={`flex w-full items-center justify-between px-4 py-2.5 text-left text-sm transition-colors ${
+                      selected === b.id ? 'font-medium' : 'hover:bg-muted'
+                    }`}
+                  >
+                    {b.label}
+                    <span className="text-xs tabular-nums text-muted-foreground">{formatSeconds(b.seconds)}</span>
+                  </button>
+                  {section(b)}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : (
+        deskReset && (
+          <div className="mt-3">
+            <button
+              type="button"
+              aria-expanded={selected === deskReset.id}
+              onClick={() => toggle(deskReset.id)}
+              className="px-1 text-sm text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline"
+            >
+              {t('dashboard.v2.notSure')}
+            </button>
+            {selected === deskReset.id && (
+              <div className="mt-2 overflow-hidden rounded-lg border border-primary bg-card ring-1 ring-primary">{section(deskReset)}</div>
+            )}
+          </div>
+        )
+      )}
+
+      {lastLine && <p className="mt-8 text-sm text-muted-foreground">{lastLine}</p>}
     </div>
   );
 }

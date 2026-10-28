@@ -1,275 +1,262 @@
-export {};
+import { openOptionsTab } from '../utils/openOptions';
+import { isPainArea, optionsHash } from '../utils/painAreas';
+import { localeFromSetting, setLocale, t } from '../i18n';
+import type { UserSettings } from '@stretchly/shared';
 
 const ALARM_NAME = 'stretchly-reminder';
+const SNOOZE_ALARM = 'stretchly-snooze';
+const SNOOZE_MINUTES = 15;
 const SETTINGS_KEY = 'stretchly-settings';
-const DEFAULT_INTERVAL = 60;
+const RELIEF_KEY = 'stretchly-relief';
+const NOTIFICATION_PREFIX = 'stretchly-reminder-';
 
-interface StoredSettings {
-  reminderInterval?: number;
-  remindersEnabled?: boolean;
+interface ReminderSettings {
+  remindersEnabled: boolean;
+  reminderInterval: number;
+  activeFrom: number;
+  activeTo: number;
+  weekdaysOnly: boolean;
+  language: UserSettings['language'];
 }
 
-async function getSettings(): Promise<{ remindersEnabled: boolean; reminderInterval: number }> {
+const DEFAULTS: ReminderSettings = {
+  remindersEnabled: true,
+  reminderInterval: 60,
+  activeFrom: 8,
+  activeTo: 19,
+  weekdaysOnly: false,
+  language: 'auto',
+};
+
+interface StoredEntry {
+  painArea?: string;
+  beforePain?: number;
+}
+
+function parse(raw: unknown): unknown {
+  return typeof raw === 'string' ? JSON.parse(raw) : raw;
+}
+
+async function getSettings(): Promise<ReminderSettings> {
   try {
-    const out = await chrome.storage.local.get(SETTINGS_KEY);
-    const raw = out[SETTINGS_KEY];
-    if (raw == null) {
-      console.log('[Stretchly] No settings found, using defaults');
-      return { remindersEnabled: true, reminderInterval: DEFAULT_INTERVAL };
-    }
-    const parsed: StoredSettings = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    const settings = {
-      remindersEnabled: typeof parsed.remindersEnabled === 'boolean' ? parsed.remindersEnabled : true,
+    const raw = (await chrome.storage.local.get(SETTINGS_KEY))[SETTINGS_KEY];
+    if (raw == null) return { ...DEFAULTS };
+    const p = parse(raw) as Partial<ReminderSettings>;
+    const hour = (v: unknown, d: number) => (typeof v === 'number' && v >= 0 && v <= 24 ? v : d);
+    return {
+      remindersEnabled: typeof p.remindersEnabled === 'boolean' ? p.remindersEnabled : DEFAULTS.remindersEnabled,
       reminderInterval:
-        typeof parsed.reminderInterval === 'number' && parsed.reminderInterval >= 1
-          ? parsed.reminderInterval
-          : DEFAULT_INTERVAL,
+        typeof p.reminderInterval === 'number' && p.reminderInterval >= 1 ? p.reminderInterval : DEFAULTS.reminderInterval,
+      activeFrom: hour(p.activeFrom, DEFAULTS.activeFrom),
+      activeTo: hour(p.activeTo, DEFAULTS.activeTo),
+      weekdaysOnly: typeof p.weekdaysOnly === 'boolean' ? p.weekdaysOnly : DEFAULTS.weekdaysOnly,
+      // localeFromSetting falls back to the browser language for anything unrecognised.
+      language: typeof p.language === 'string' ? p.language : DEFAULTS.language,
     };
-    console.log('[Stretchly] Loaded settings:', settings);
-    return settings;
   } catch (e) {
-    console.warn('[Stretchly] Error loading settings:', e);
-    return { remindersEnabled: true, reminderInterval: DEFAULT_INTERVAL };
+    console.warn('[Stretchly] Could not read settings:', e);
+    return { ...DEFAULTS };
   }
 }
 
-async function syncReminderAlarm(): Promise<void> {
+async function getRelief(): Promise<StoredEntry[]> {
   try {
-    const { remindersEnabled, reminderInterval } = await getSettings();
-    
-    // Clear existing alarm
+    const value = parse((await chrome.storage.local.get(RELIEF_KEY))[RELIEF_KEY]);
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+
+/** True when a reminder may be shown now, given active hours and the weekdays-only option. */
+function withinActiveHours(s: ReminderSettings, now = new Date()): boolean {
+  const day = now.getDay();
+  if (s.weekdaysOnly && (day === 0 || day === 6)) return false;
+  const h = now.getHours();
+  if (s.activeFrom === s.activeTo) return true;
+  return s.activeFrom < s.activeTo ? h >= s.activeFrom && h < s.activeTo : h >= s.activeFrom || h < s.activeTo;
+}
+
+/**
+ * Make the repeating alarm match the settings. An alarm that already has the right period is left
+ * alone, so opening the options page or changing the theme doesn't restart the countdown.
+ * `restart` forces a fresh full interval, used right after the user finishes a routine.
+ */
+async function syncReminderAlarm(restart = false): Promise<void> {
+  const { remindersEnabled, reminderInterval } = await getSettings();
+  const existing = await chrome.alarms.get(ALARM_NAME);
+  if (!remindersEnabled) {
     await chrome.alarms.clear(ALARM_NAME);
-    console.log('[Stretchly] Cleared existing alarm');
-    
-    if (remindersEnabled) {
-      // Create alarm with both delayInMinutes (for first fire) and periodInMinutes (for repeating)
-      // This ensures the first alarm fires after reminderInterval minutes, then repeats
-      const delayInMinutes = reminderInterval;
-      chrome.alarms.create(ALARM_NAME, {
-        delayInMinutes: delayInMinutes,
-        periodInMinutes: reminderInterval,
-      });
-      console.log(`[Stretchly] Created reminder alarm - first fire in ${delayInMinutes} min, then every ${reminderInterval} min`);
-      
-      // Verify alarm was created
-      const alarms = await chrome.alarms.getAll();
-      const ourAlarm = alarms.find(a => a.name === ALARM_NAME);
-      if (ourAlarm) {
-        const fireTime = ourAlarm.scheduledTime ? new Date(ourAlarm.scheduledTime) : null;
-        const timeUntilFire = fireTime ? Math.round((fireTime.getTime() - Date.now()) / 1000 / 60) : null;
-        console.log('[Stretchly] Alarm verified:', {
-          name: ourAlarm.name,
-          scheduledTime: fireTime ? fireTime.toISOString() : 'unknown',
-          timeUntilFire: timeUntilFire !== null ? `${timeUntilFire} minutes` : 'unknown',
-          periodInMinutes: ourAlarm.periodInMinutes,
-        });
-      } else {
-        console.error('[Stretchly] Alarm was not created!');
-      }
-    } else {
-      console.log('[Stretchly] Reminders disabled, alarm cleared');
-    }
-  } catch (e) {
-    console.error('[Stretchly] Failed to sync reminder alarm:', e);
+    await chrome.alarms.clear(SNOOZE_ALARM);
+    return;
+  }
+  if (!restart && existing?.periodInMinutes === reminderInterval) return;
+  await chrome.alarms.clear(ALARM_NAME);
+  await chrome.alarms.create(ALARM_NAME, { delayInMinutes: reminderInterval, periodInMinutes: reminderInterval });
+}
+
+function permissionLevel(): Promise<string> {
+  return new Promise((resolve) => {
+    chrome.notifications.getPermissionLevel((level) => resolve(chrome.runtime.lastError ? 'unknown' : level));
+  });
+}
+
+/** Notification body that uses the user's own history when there is any. */
+async function reminderMessage(): Promise<{ message: string; area: string | null }> {
+  const relief = await getRelief();
+  const last = relief[relief.length - 1];
+  if (last && last.painArea && isPainArea(last.painArea) && typeof last.beforePain === 'number') {
+    return { message: t(`notify.lastTime.${last.painArea}`, { level: last.beforePain }), area: last.painArea };
+  }
+  return { message: t('notify.generic'), area: null };
+}
+
+/** Area each live notification should open; kept in session storage so it survives a worker restart. */
+async function rememberArea(id: string, area: string | null) {
+  try {
+    await chrome.storage.session.set({ [id]: area });
+  } catch {
+    // Session storage unavailable; the notification then opens the area picker.
+  }
+}
+
+async function areaFor(id: string): Promise<string | null> {
+  try {
+    const value = (await chrome.storage.session.get(id))[id];
+    return typeof value === 'string' ? value : null;
+  } catch {
+    return null;
   }
 }
 
 async function showReminderNotification(): Promise<{ success: boolean; error?: string }> {
   try {
-    // First check notification permission level
-    const permissionLevel = await new Promise<string>((resolve) => {
-      chrome.notifications.getPermissionLevel((level) => {
-        resolve(level);
-      });
+    // The worker has no UI of its own; take the language from settings each time it speaks.
+    setLocale(localeFromSetting((await getSettings()).language));
+    if ((await permissionLevel()) !== 'granted') {
+      return { success: false, error: t('notify.blocked') };
+    }
+    const { message, area } = await reminderMessage();
+    const id = NOTIFICATION_PREFIX + Date.now();
+    await new Promise<void>((resolve, reject) => {
+      chrome.notifications.create(
+        id,
+        {
+          type: 'basic',
+          iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+          title: t('notify.title'),
+          message,
+          buttons: [
+            { title: area ? t('notify.start') : t('notify.open') },
+            { title: t('notify.snooze', { count: SNOOZE_MINUTES }) },
+          ],
+          priority: 2,
+        },
+        () => (chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve())
+      );
     });
-    
-    console.log('[Stretchly] Notification permission level:', permissionLevel);
-    
-    if (permissionLevel !== 'granted') {
-      console.error('[Stretchly] ❌ Notifications not permitted. Level:', permissionLevel);
-      return { 
-        success: false, 
-        error: `Notifications blocked. Check Chrome settings and macOS System Settings > Notifications > Google Chrome` 
-      };
-    }
+    await rememberArea(id, area);
 
-    // Get icon URL - using the extension's icon
-    const iconUrl = chrome.runtime.getURL('icons/icon128.png');
-    console.log('[Stretchly] Creating notification with icon:', iconUrl);
-    
-    // Create notification with unique ID to prevent duplicates
-    const notificationId = 'stretchly-reminder-' + Date.now();
-    
-    const notificationOptions: chrome.notifications.NotificationOptions = {
-      type: 'basic',
-      iconUrl,
-      title: 'Time to Stretch!',
-      message: "Take a quick break and check in on your body.",
-      priority: 2,
-      requireInteraction: false,
-      silent: false,
-    };
-
-    try {
-      const id = await new Promise<string>((resolve, reject) => {
-        chrome.notifications.create(notificationId, notificationOptions, (createdId) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-          } else {
-            resolve(createdId || notificationId);
-          }
-        });
-      });
-      
-      console.log('[Stretchly] ✅ Notification API returned ID:', id);
-      
-      // Verify the notification exists
-      const exists = await new Promise<boolean>((resolve) => {
-        chrome.notifications.getAll((notifications) => {
-          console.log('[Stretchly] Active notifications:', Object.keys(notifications));
-          resolve(id in notifications);
-        });
-      });
-      
-      if (exists) {
-        console.log('[Stretchly] ✅ Notification verified as active');
-        return { success: true };
-      } else {
-        console.warn('[Stretchly] ⚠️ Notification was created but not found in active list');
-        console.warn('[Stretchly] This usually means macOS is blocking Chrome notifications.');
-        console.warn('[Stretchly] Fix: System Settings > Notifications > Google Chrome > Allow Notifications');
-        return { 
-          success: false, 
-          error: 'Notification created but blocked by system. Enable notifications for Chrome in macOS System Settings > Notifications > Google Chrome' 
-        };
-      }
-    } catch (error) {
-      console.error('[Stretchly] Notification creation failed:', error);
-      return { success: false, error: String(error) };
+    const shown = await new Promise<boolean>((resolve) => chrome.notifications.getAll((all) => resolve(id in all)));
+    if (!shown) {
+      return { success: false, error: t('notify.hidden') };
     }
+    return { success: true };
   } catch (e) {
-    console.error('[Stretchly] ❌ Error in showReminderNotification:', e);
-    return { success: false, error: String(e) };
+    console.error('[Stretchly] Notification failed:', e);
+    return { success: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
 
-// Handle alarm events - MUST be registered at top level BEFORE any async operations
-// This ensures the listener is active when the service worker wakes up for an alarm
+async function openFromNotification(id: string) {
+  const area = await areaFor(id);
+  try {
+    await openOptionsTab(optionsHash('dashboard', area && isPainArea(area) ? area : undefined));
+  } catch (e) {
+    console.error('[Stretchly] Could not open the options page:', e);
+  }
+  chrome.notifications.clear(id);
+  void chrome.storage.session.remove(id).catch(() => {});
+}
+
+// Listeners must be registered at top level so they exist when the worker wakes for an event.
 chrome.alarms.onAlarm.addListener((alarm) => {
-  console.log('[Stretchly] ⏰ Alarm fired:', alarm.name, 'at', new Date().toISOString());
-  if (alarm.name === ALARM_NAME) {
-    console.log('[Stretchly] Processing reminder alarm...');
-    void showReminderNotification();
+  if (alarm.name !== ALARM_NAME && alarm.name !== SNOOZE_ALARM) return;
+  void getSettings().then((s) => {
+    if (s.remindersEnabled && withinActiveHours(s)) void showReminderNotification();
+  });
+});
+
+chrome.notifications.onClicked.addListener((id) => {
+  if (id.startsWith(NOTIFICATION_PREFIX)) void openFromNotification(id);
+});
+
+chrome.notifications.onButtonClicked.addListener((id, button) => {
+  if (!id.startsWith(NOTIFICATION_PREFIX)) return;
+  if (button === 0) {
+    void openFromNotification(id);
   } else {
-    console.log('[Stretchly] Unknown alarm:', alarm.name);
+    chrome.notifications.clear(id);
+    void chrome.alarms.create(SNOOZE_ALARM, { delayInMinutes: SNOOZE_MINUTES });
   }
 });
 
-// Check notification permission on startup
-async function checkNotificationPermission(): Promise<boolean> {
-  if (!chrome.notifications) {
-    console.error('[Stretchly] ❌ chrome.notifications API not available');
-    return false;
+chrome.runtime.onInstalled.addListener((details) => {
+  void syncReminderAlarm();
+  // First install: show the Relief page once so the extension isn't silent for the first hour.
+  if (details.reason === 'install') void openOptionsTab('#dashboard?welcome=1').catch(() => {});
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local') return;
+  if (changes[SETTINGS_KEY]) void syncReminderAlarm();
+  // A new session was saved: the user just stretched, so start a full interval from now.
+  if (changes[RELIEF_KEY]) {
+    const count = (v: unknown) => {
+      try {
+        const parsed = parse(v);
+        return Array.isArray(parsed) ? parsed.length : 0;
+      } catch {
+        return 0;
+      }
+    };
+    if (count(changes[RELIEF_KEY].newValue) > count(changes[RELIEF_KEY].oldValue)) {
+      void chrome.alarms.clear(SNOOZE_ALARM);
+      void syncReminderAlarm(true);
+    }
   }
-  
-  // Chrome extensions with "notifications" permission should have access
-  // But we can verify by trying to get permission level
-  try {
-    const level = await new Promise<string>((resolve) => {
-      chrome.notifications.getPermissionLevel((level) => {
-        if (chrome.runtime.lastError) {
-          resolve('unknown');
-        } else {
-          resolve(level);
-        }
-      });
-    });
-    console.log('[Stretchly] Notification permission level:', level);
-    return level === 'granted';
-  } catch (e) {
-    console.warn('[Stretchly] Could not check notification permission:', e);
-    // Assume granted if we have the permission in manifest
+});
+
+chrome.runtime.onMessage.addListener((msg: { type?: string }, _sender, sendResponse) => {
+  if (msg.type === 'SYNC_REMINDERS') {
+    void syncReminderAlarm().then(() => sendResponse({ ok: true }));
     return true;
   }
-}
-
-// Initialize on install
-chrome.runtime.onInstalled.addListener(() => {
-  console.log('[Stretchly] Extension installed/updated');
-  void checkNotificationPermission();
-  void syncReminderAlarm();
-});
-
-// Handle notification clicks
-chrome.notifications.onClicked.addListener((notificationId) => {
-  console.log('[Stretchly] Notification clicked:', notificationId);
-  chrome.notifications.clear(notificationId);
-  void chrome.runtime.openOptionsPage();
-});
-
-// Handle storage changes
-chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === 'local' && changes[SETTINGS_KEY]) {
-    console.log('[Stretchly] Settings changed, syncing alarm');
-    void syncReminderAlarm();
+  if (msg.type === 'TEST_NOTIFICATION') {
+    void showReminderNotification().then((r) => sendResponse({ ok: r.success, sent: r.success, error: r.error }));
+    return true;
   }
-});
-
-// Handle messages from options page
-chrome.runtime.onMessage.addListener(
-  (msg: { type?: string }, _sender, sendResponse) => {
-    if (msg.type === 'SYNC_REMINDERS') {
-      console.log('[Stretchly] Received SYNC_REMINDERS message');
-      void syncReminderAlarm().then(() => {
-        sendResponse({ ok: true });
-      });
-      return true; // Keep channel open for async response
-    }
-    if (msg.type === 'TEST_NOTIFICATION') {
-      console.log('[Stretchly] Received TEST_NOTIFICATION message');
-      void showReminderNotification().then((result) => {
-        sendResponse({ ok: result.success, sent: result.success, error: result.error });
-      });
-      return true; // Fixed: return true when using sendResponse
-    }
-    if (msg.type === 'CHECK_ALARMS') {
-      // Debug helper: check all alarms
-      chrome.alarms.getAll().then((alarms) => {
-        console.log('[Stretchly] All alarms:', alarms);
-        sendResponse({ alarms: alarms.map(a => ({
-          name: a.name,
-          scheduledTime: a.scheduledTime ? new Date(a.scheduledTime).toISOString() : null,
-          periodInMinutes: a.periodInMinutes,
-        })) });
-      });
-      return true;
-    }
-    if (msg.type === 'GET_ALARM_STATUS') {
-      // Get current alarm status for UI display
-      Promise.all([
-        chrome.alarms.get(ALARM_NAME),
-        getSettings(),
-        checkNotificationPermission(),
-      ]).then(([alarm, settings, hasNotificationPermission]) => {
-        const status = {
+  if (msg.type === 'GET_ALARM_STATUS') {
+    void Promise.all([chrome.alarms.get(ALARM_NAME), chrome.alarms.get(SNOOZE_ALARM), getSettings(), permissionLevel()]).then(
+      ([alarm, snooze, settings, level]) => {
+        const next = [alarm?.scheduledTime, snooze?.scheduledTime].filter((t): t is number => t != null);
+        const nextTime = next.length ? Math.min(...next) : null;
+        sendResponse({
           alarmExists: !!alarm,
-          nextFireTime: alarm?.scheduledTime ? new Date(alarm.scheduledTime).toISOString() : null,
-          nextFireIn: alarm?.scheduledTime ? Math.round((alarm.scheduledTime - Date.now()) / 1000) : null,
+          nextFireTime: nextTime ? new Date(nextTime).toISOString() : null,
+          nextFireIn: nextTime ? Math.round((nextTime - Date.now()) / 1000) : null,
           periodInMinutes: alarm?.periodInMinutes ?? null,
           remindersEnabled: settings.remindersEnabled,
           reminderInterval: settings.reminderInterval,
-          hasNotificationPermission,
-        };
-        console.log('[Stretchly] Alarm status:', status);
-        sendResponse(status);
-      });
-      return true;
-    }
-    return false; // Don't keep channel open for unknown messages
+          hasNotificationPermission: level === 'granted',
+          withinActiveHours: withinActiveHours(settings),
+        });
+      }
+    );
+    return true;
   }
-);
+  return false;
+});
 
-// Sync alarms whenever the service worker starts (e.g. after browser restart)
-console.log('[Stretchly] Service worker started, syncing alarms');
-void checkNotificationPermission();
+// The worker also starts after a browser restart; make sure the alarm still exists.
 void syncReminderAlarm();

@@ -5,7 +5,7 @@ export const exercises: Exercise[] = [
     id: 'neck-tilt',
     name: 'Neck Side Tilt',
     description: 'Gentle side-to-side tilts to release neck tension',
-    duration: 30,
+    duration: 36,
     category: 'neck',
     instructions: [
       'Sit up straight with shoulders relaxed',
@@ -18,7 +18,7 @@ export const exercises: Exercise[] = [
     id: 'neck-rotation',
     name: 'Neck Rotation',
     description: 'Gentle rotation to improve neck mobility',
-    duration: 20,
+    duration: 24,
     category: 'neck',
     instructions: [
       'Sit up tall with shoulders down',
@@ -31,7 +31,7 @@ export const exercises: Exercise[] = [
     id: 'chin-tuck',
     name: 'Chin Tuck',
     description: 'Strengthen neck muscles and counter forward head posture',
-    duration: 25,
+    duration: 28,
     category: 'neck',
     instructions: [
       'Sit or stand with good posture',
@@ -44,7 +44,7 @@ export const exercises: Exercise[] = [
     id: 'shoulder-rolls',
     name: 'Shoulder Rolls',
     description: 'Release shoulder tension from desk work',
-    duration: 30,
+    duration: 60,
     category: 'shoulders',
     instructions: [
       'Sit or stand with arms relaxed at your sides',
@@ -57,7 +57,7 @@ export const exercises: Exercise[] = [
     id: 'shoulder-shrugs',
     name: 'Shoulder Shrugs',
     description: 'Release upper trapezius tension',
-    duration: 25,
+    duration: 24,
     category: 'shoulders',
     instructions: [
       'Sit or stand with good posture',
@@ -71,7 +71,7 @@ export const exercises: Exercise[] = [
     id: 'shoulder-squeeze',
     name: 'Shoulder Blade Squeeze',
     description: 'Counter rounded posture and strengthen upper back',
-    duration: 25,
+    duration: 24,
     category: 'shoulders',
     instructions: [
       'Sit up straight',
@@ -237,6 +237,149 @@ export const exercises: Exercise[] = [
       'Keep head still, move only your eyes',
     ],
   },
+  {
+    id: 'chest-opener',
+    name: 'Chest Opener',
+    description: 'Open the chest and the front of the shoulders after hours of reaching forward',
+    duration: 30,
+    category: 'shoulders',
+    instructions: [
+      'Sit or stand tall and clasp your hands behind your back',
+      'Straighten your arms and draw your shoulder blades down and together',
+      'Lift your hands slightly and open your chest',
+      'Hold for 10 seconds, release, and repeat',
+    ],
+  },
+  {
+    id: 'cross-body-shoulder',
+    name: 'Cross-Body Shoulder Stretch',
+    description: 'Release the back of the shoulder',
+    duration: 40,
+    category: 'shoulders',
+    instructions: [
+      'Bring your right arm straight across your chest at shoulder height',
+      'Hook your left hand above the right elbow and gently draw the arm closer',
+      'Keep the shoulder down, away from the ear',
+      'Hold for 10-15 seconds, then switch arms',
+    ],
+  },
+  {
+    id: 'overhead-triceps',
+    name: 'Overhead Triceps Stretch',
+    description: 'Lengthen the back of the arm and the side of the upper back',
+    duration: 40,
+    category: 'shoulders',
+    instructions: [
+      'Raise your right arm, bend the elbow and let the hand drop behind your neck',
+      'Place your left hand on the right elbow and press gently back',
+      'Keep your head up and your ribs down',
+      'Hold for 10-15 seconds, then switch arms',
+    ],
+  },
+  {
+    id: 'upper-back-reach',
+    name: 'Upper Back Reach',
+    description: 'Spread the shoulder blades and release the upper back',
+    duration: 30,
+    category: 'back',
+    instructions: [
+      'Interlace your fingers and turn your palms away from you',
+      'Push your hands forward at shoulder height and round your upper back',
+      'Drop your chin and feel the space open between your shoulder blades',
+      'Hold for 10 seconds, release, and repeat',
+    ],
+  },
+  {
+    id: 'standing-side-bend',
+    name: 'Standing Side Bend',
+    description: 'Lengthen the sides of the torso and the lower back',
+    duration: 40,
+    category: 'back',
+    instructions: [
+      'Stand with feet hip-width apart and reach your left arm overhead',
+      'Lean to the right, sliding your right hand down your thigh',
+      'Keep both feet planted and your chest facing forward',
+      'Hold for 10-15 seconds, then switch sides',
+    ],
+  },
+  {
+    id: 'seated-forward-fold',
+    name: 'Seated Forward Fold',
+    description: 'Let the lower back and hips release',
+    duration: 30,
+    category: 'back',
+    instructions: [
+      'Sit at the edge of your chair with feet flat and knees apart',
+      'Fold forward from the hips, sliding your hands down your shins',
+      'Let your head and arms hang heavy and breathe slowly',
+      'Hold for 10 seconds, then roll up slowly',
+    ],
+  },
+  {
+    id: 'seated-figure-four',
+    name: 'Seated Figure Four',
+    description: 'Release tight glutes and the outer hip from long sitting',
+    duration: 40,
+    category: 'hips',
+    instructions: [
+      'Sit tall and rest your right ankle on your left knee',
+      'Let the right knee drop open, keeping the foot flexed',
+      'Hinge forward from the hips until you feel the stretch in the right hip',
+      'Hold for 10-15 seconds, then switch legs',
+    ],
+  },
+  {
+    id: 'seated-hamstring',
+    name: 'Seated Hamstring Stretch',
+    description: 'Lengthen the back of the thigh',
+    duration: 40,
+    category: 'legs',
+    instructions: [
+      'Sit at the edge of your chair and straighten your right leg, heel on the floor',
+      'Pull the toes up toward you',
+      'Keep your back straight and hinge forward from the hips',
+      'Hold for 10-15 seconds, then switch legs',
+    ],
+  },
+  {
+    id: 'standing-quad',
+    name: 'Standing Quad Stretch',
+    description: 'Open the front of the thigh and hip',
+    duration: 40,
+    category: 'legs',
+    instructions: [
+      'Stand and hold the back of your chair with your left hand',
+      'Bend your right knee and take the ankle in your right hand',
+      'Keep the knees together and gently press the hips forward',
+      'Hold for 10-15 seconds, then switch legs',
+    ],
+  },
+  {
+    id: 'standing-calf',
+    name: 'Standing Calf Stretch',
+    description: 'Release calves that stiffen under the desk',
+    duration: 40,
+    category: 'legs',
+    instructions: [
+      'Stand facing a wall or desk with your hands on it at shoulder height',
+      'Step your right foot back, heel down and toes pointing forward',
+      'Bend the front knee and lean in until you feel the stretch in the right calf',
+      'Hold for 10-15 seconds, then switch legs',
+    ],
+  },
+  {
+    id: 'ankle-circles',
+    name: 'Ankle Circles',
+    description: 'Get blood moving in the lower legs',
+    duration: 30,
+    category: 'legs',
+    instructions: [
+      'Sit tall and lift your right foot a little off the floor',
+      'Circle the foot slowly from the ankle, 5 times each way',
+      'Keep the movement smooth and the shin still',
+      'Switch feet and repeat',
+    ],
+  },
 ];
 
 export const painRoutines: Record<string, string[]> = {
@@ -251,7 +394,7 @@ export const painRoutines: Record<string, string[]> = {
 export const quickRoutines = {
   deskReset: {
     name: 'Desk Reset',
-    duration: 90,
+    duration: 126,
     exercises: ['neck-tilt', 'shoulder-rolls', 'wrist-circles'],
   },
   postureCorrect: {
@@ -263,5 +406,10 @@ export const quickRoutines = {
     name: 'Screen Break',
     duration: 80,
     exercises: ['eye-20-20-20', 'neck-rotation', 'shoulder-shrugs'],
+  },
+  hipsAndLegs: {
+    name: 'Hips and Legs',
+    duration: 110,
+    exercises: ['seated-figure-four', 'seated-hamstring', 'ankle-circles'],
   },
 };

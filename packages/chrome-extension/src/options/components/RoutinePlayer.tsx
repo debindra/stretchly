@@ -1,323 +1,414 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { motion, useAnimationFrame, useMotionValue, useMotionValueEvent, useTransform, type MotionValue } from 'motion/react';
 import type { Exercise } from '@stretchly/shared';
-import { Play, Pause, SkipForward, SkipBack, X, CheckCircle2, RotateCcw } from 'lucide-react';
+import { localizeExercise } from '@stretchly/shared';
+import { Play, Pause, SkipForward, SkipBack, X, Check } from 'lucide-react';
 import { ExerciseAnimation } from './ExerciseAnimations';
+import { categoryLabel } from './ExerciseLibrary';
 import { PainScale } from './PainScale';
-import { formatPainArea } from '../utils/formatDate';
-
-function usePrefersReducedMotion(): boolean {
-  const [prefers, setPrefers] = useState(false);
-  useEffect(() => {
-    const m = window.matchMedia('(prefers-reduced-motion: reduce)');
-    setPrefers(m.matches);
-    const onChange = () => setPrefers(m.matches);
-    m.addEventListener('change', onChange);
-    return () => m.removeEventListener('change', onChange);
-  }, []);
-  return prefers;
-}
+import { Modal } from './Modal';
+import { formatPainArea, formatSeconds } from '../utils/formatDate';
+import { chime } from '../../utils/chime';
+import { isPainArea } from '../../utils/painAreas';
+import { formatList, t, tp } from '../../i18n';
+import { useLocale } from '../../i18n/react';
 
 interface RoutinePlayerProps {
   exercises: Exercise[];
   painArea: string;
   beforePainLevel: number;
-  onComplete: (afterPainLevel: number) => void;
+  /** Play a soft chime at each exercise and cue change. */
+  soundCues: boolean;
+  /** First routine ever: hide the queue, shortcuts and rating skip so there is less to take in. */
+  firstRun?: boolean;
+  /** `rated` is false when the user skipped the after-rating. */
+  onComplete: (afterPainLevel: number, rated: boolean) => void;
   onCancel: () => void;
 }
 
+/** Seconds elapsed in the current exercise; advances every frame while `running`. */
+function useExerciseClock(running: boolean): MotionValue<number> {
+  const clock = useMotionValue(0);
+  useAnimationFrame((_, delta) => {
+    if (running) clock.set(clock.get() + Math.min(delta, 100) / 1000);
+  });
+  return clock;
+}
+
+const formatClock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+
+/** Countdown in the frame corner; re-renders only when the whole second changes. */
+function Countdown({ clock, duration, name }: { clock: MotionValue<number>; duration: number; name: string }) {
+  const left = (v: number) => Math.max(0, Math.ceil(duration - v));
+  const [remaining, setRemaining] = useState(() => left(clock.get()));
+  useMotionValueEvent(clock, 'change', (v) => setRemaining(left(v)));
+  // Visible from other tabs, so you can glance at how long is left.
+  useEffect(() => {
+    document.title = `${formatClock(remaining)} · ${name}`;
+  }, [remaining, name]);
+  return (
+    <span
+      className="absolute right-3 top-3 text-sm tabular-nums text-muted-foreground"
+      role="timer"
+      aria-label={tp('player.secondsRemaining', remaining)}
+    >
+      {formatClock(remaining)}
+    </span>
+  );
+}
+
+/** For exercises without an animation: the instruction that matches the elapsed time, shown large. */
+function StepText({ clock, duration, steps }: { clock: MotionValue<number>; duration: number; steps: string[] }) {
+  const stepAt = (v: number) => Math.min(steps.length - 1, Math.floor((v / (duration || 1)) * steps.length));
+  const [step, setStep] = useState(() => stepAt(clock.get()));
+  useMotionValueEvent(clock, 'change', (v) => setStep(stepAt(v)));
+  return (
+    <div className="px-8 text-center">
+      <p className="text-xs tabular-nums text-muted-foreground">
+        {t('player.step', { n: step + 1, total: steps.length })}
+      </p>
+      <p className="mt-2 text-xl font-medium leading-snug">{steps[step]}</p>
+    </div>
+  );
+}
+
+/** Header segment for the exercise in progress. */
+function CurrentBar({ clock, duration }: { clock: MotionValue<number>; duration: number }) {
+  const width = useTransform(clock, (v) => `${duration ? Math.min(1, v / duration) * 100 : 0}%`);
+  return <motion.div className="h-full bg-primary" style={{ width }} />;
+}
+
+const secondaryButton =
+  'rounded-md border border-border bg-card px-3 py-1.5 text-sm font-medium transition-colors hover:bg-muted';
+
 export function RoutinePlayer({
-  exercises,
+  exercises: given,
   painArea,
   beforePainLevel,
+  soundCues,
+  firstRun = false,
   onComplete,
   onCancel,
 }: RoutinePlayerProps) {
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [elapsed, setElapsed] = useState(0);
+  const locale = useLocale();
+  const exercises = useMemo(() => given.map((ex) => localizeExercise(ex, locale)), [given, locale]);
+  const [index, setIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(true);
+  /** Set when the routine paused itself because the tab was hidden. */
+  const [pausedAway, setPausedAway] = useState(false);
   const [isFinished, setIsFinished] = useState(false);
-  const [afterPainLevel, setAfterPainLevel] = useState(beforePainLevel);
-  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
-  const prefersReducedMotion = usePrefersReducedMotion();
+  const [afterPain, setAfterPain] = useState(beforePainLevel);
+  const [confirmExit, setConfirmExit] = useState(false);
 
-  const currentExercise = exercises[currentIndex];
-  const duration = currentExercise?.duration ?? 0;
-  const timeRemaining = Math.max(0, duration - elapsed);
+  const exercise = exercises[index];
+  const duration = exercise?.duration ?? 0;
+  const clock = useExerciseClock(isPlaying && !isFinished && !confirmExit);
+  const isLast = index === exercises.length - 1;
+
+  const goTo = useCallback(
+    (i: number) => {
+      if (i >= exercises.length) {
+        setIsFinished(true);
+        return;
+      }
+      setIndex(Math.max(0, i));
+      clock.set(0);
+    },
+    [exercises.length, clock]
+  );
+
+  // Restore the page title when the player closes.
+  useEffect(() => {
+    const title = document.title;
+    return () => {
+      document.title = title;
+    };
+  }, []);
+
+  // Animation frames stop in background tabs, which would freeze the timer without saying so.
+  // Pause explicitly instead, and tell the user why when they come back.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden && isPlaying && !isFinished) {
+        setIsPlaying(false);
+        setPausedAway(true);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [isPlaying, isFinished]);
 
   useEffect(() => {
-    if (!isPlaying || isFinished || duration === 0) return;
-    const interval = setInterval(() => {
-      setElapsed((e) => {
-        const next = e + 1;
-        if (next >= duration) {
-          if (currentIndex < exercises.length - 1) {
-            setCurrentIndex((i) => i + 1);
-            return 0;
-          }
-          setIsFinished(true);
-          return next;
-        }
-        return next;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [isPlaying, isFinished, currentIndex, duration, exercises.length]);
+    if (isFinished) document.title = t('player.completeDocTitle');
+  }, [isFinished]);
 
+  // Audio cue at the start of each exercise and when the routine ends.
   useEffect(() => {
-    setElapsed(0);
-  }, [currentIndex]);
+    if (soundCues && !isFinished) chime('start');
+  }, [index, soundCues, isFinished]);
+  useEffect(() => {
+    if (soundCues && isFinished) chime('done');
+  }, [isFinished, soundCues]);
 
-  const togglePlayPause = () => {
+  const togglePlay = useCallback(() => {
+    setPausedAway(false);
     setIsPlaying((p) => !p);
-  };
+  }, []);
 
-  const skipToNext = () => {
-    if (currentIndex < exercises.length - 1) {
-      setCurrentIndex((i) => i + 1);
-      setElapsed(0);
-    } else {
-      setIsFinished(true);
-    }
-  };
+  // Auto-advance when the current exercise runs out.
+  useMotionValueEvent(clock, 'change', (v) => {
+    if (duration > 0 && v >= duration) goTo(index + 1);
+  });
 
-  const skipToPrevious = () => {
-    if (currentIndex > 0) {
-      setCurrentIndex((i) => i - 1);
-      setElapsed(0);
-    }
-  };
+  const requestExit = useCallback(() => {
+    if (index > 0 || clock.get() > 5) setConfirmExit(true);
+    else onCancel();
+  }, [index, clock, onCancel]);
 
-  const resetCurrentExercise = () => {
-    setElapsed(0);
-  };
-
-  const handleCancelClick = () => {
-    if (currentIndex > 0) {
-      setShowCancelConfirm(true);
-    } else {
-      onCancel();
-    }
-  };
-
-  const confirmCancel = () => {
-    setShowCancelConfirm(false);
-    onCancel();
-  };
-
-  const handleComplete = () => {
-    onComplete(afterPainLevel);
-  };
+  // Space = play/pause, ←/→ = previous/next, Esc = exit.
+  useEffect(() => {
+    if (isFinished || confirmExit) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement;
+      const onControl = target.closest('button, input, select, textarea, summary');
+      if (e.key === ' ' && !onControl) {
+        e.preventDefault();
+        togglePlay();
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        goTo(index + 1);
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        goTo(index - 1);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        requestExit();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isFinished, confirmExit, index, goTo, requestExit, togglePlay]);
 
   if (isFinished) {
-    const relief = beforePainLevel - afterPainLevel;
+    const relief = beforePainLevel - afterPain;
+    const totalSeconds = exercises.reduce((sum, ex) => sum + ex.duration, 0);
+    const question = isPainArea(painArea) ? t(`player.question.${painArea}`) : t('player.questionGeneral');
+    const comparison =
+      relief > 0
+        ? t('player.down', { diff: relief, before: beforePainLevel })
+        : relief < 0
+          ? t('player.up', { diff: -relief, before: beforePainLevel })
+          : t('player.same', { before: beforePainLevel });
+    const area = painArea === 'custom' ? null : formatPainArea(painArea, true);
 
     return (
-      <div className="h-screen bg-background flex items-center justify-center p-4">
-        <div className="bg-card rounded-xl p-6 max-w-sm w-full text-center shadow-xl border border-border animate-in fade-in slide-in-from-bottom-4 duration-500">
-          <div className="w-14 h-14 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
-            <CheckCircle2 className="w-7 h-7 text-primary" />
-          </div>
-          <h2 className="text-xl text-foreground mb-2 font-bold">How do you feel now?</h2>
-          <p className="text-muted-foreground mb-4 text-sm">Rate your {formatPainArea(painArea)} pain level</p>
+      <div className="min-h-screen bg-background">
+        <div className="mx-auto max-w-md px-4 py-16 sm:px-6">
+          <h1 className="text-2xl font-semibold">{t('player.complete')}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t('player.completeSummary', {
+              exercises: tp('count.exercises', exercises.length),
+              duration: formatSeconds(totalSeconds),
+              names: formatList(exercises.map((ex) => ex.name)),
+            })}
+          </p>
 
-          <div className="mb-5 text-left">
-            <PainScale
-              id="routine-after-pain"
-              value={afterPainLevel}
-              onChange={setAfterPainLevel}
-              min={0}
-              max={10}
-              label="After"
-              variant="before-after"
-              beforeValue={beforePainLevel}
-            />
-          </div>
-
-          {relief > 0 && (
-            <div className="mb-5 p-3 bg-gradient-to-r from-primary/10 to-primary/5 rounded-lg flex items-center justify-center gap-2 border border-primary/20">
-              <CheckCircle2 className="w-4 h-4 text-primary" />
-              <p className="text-primary font-semibold text-sm">
-                {relief} point{relief !== 1 ? 's' : ''} of relief!
-              </p>
-            </div>
+          <PainScale
+            id="routine-after-pain"
+            className="mt-8"
+            value={afterPain}
+            onChange={setAfterPain}
+            min={0}
+            max={10}
+            label={question}
+            variant="no-pain-severe"
+          />
+          <p className="mt-3 text-sm text-muted-foreground" aria-live="polite">
+            {comparison}
+          </p>
+          {relief < 0 && (
+            <p className="mt-3 border-l-2 border-warning pl-3 text-sm">
+              {area ? t('player.worseArea', { area }) : t('player.worseGeneral')}
+            </p>
           )}
 
-          <button
-            onClick={handleComplete}
-            className="w-full bg-accent text-accent-foreground py-3 rounded-lg hover:bg-accent active:scale-[0.98] transition-all duration-200 shadow-lg font-semibold"
-          >
-            Done
-          </button>
+          <div className="mt-6 flex flex-wrap items-center gap-4">
+            <button
+              type="button"
+              onClick={() => onComplete(afterPain, true)}
+              className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent-hover"
+            >
+              {t('player.saveFinish')}
+            </button>
+            {!firstRun && (
+              <button
+                type="button"
+                onClick={() => onComplete(afterPain, false)}
+                className="text-sm text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline"
+              >
+                {t('player.skipRating')}
+              </button>
+            )}
+          </div>
+          {!firstRun && <p className="mt-2 text-xs text-muted-foreground">{t('player.skippedNote')}</p>}
         </div>
       </div>
     );
   }
 
-  const progressPercentage = duration > 0 ? (timeRemaining / duration) * 100 : 0;
+  const stepButton =
+    'rounded-md border border-border bg-card p-2.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40';
 
   return (
-    <div className="h-screen bg-background p-3 md:p-4 flex flex-col">
-      <div className="max-w-3xl mx-auto w-full flex flex-col flex-1">
-        {/* Progress bar + cancel - Enhanced */}
-        <div className="flex items-center justify-between mb-3 md:mb-4">
-          <div className="flex items-center gap-1 flex-1">
-            {exercises.map((_, idx) => {
-              const isDone = idx < currentIndex;
-              const isCurrent = idx === currentIndex;
-              return (
-                <div
-                  key={idx}
-                  className={`flex-1 rounded-full transition-all duration-300 ${
-                    isDone ? 'bg-primary h-1.5' : isCurrent ? 'bg-primary/60 h-1.5' : 'bg-muted h-1'
-                  }`}
-                  title={isCurrent ? `Exercise ${idx + 1} of ${exercises.length}` : isDone ? `Completed` : `Upcoming`}
-                />
-              );
-            })}
+    <div className="flex min-h-screen flex-col bg-background">
+      <header className="border-b border-border">
+        <div className="mx-auto flex w-full max-w-5xl items-center gap-4 px-4 py-3 sm:px-6">
+          <span className="whitespace-nowrap text-sm tabular-nums text-muted-foreground">
+            {t('player.position', { n: index + 1, total: exercises.length })}
+          </span>
+          <div className="flex flex-1 gap-1" aria-hidden>
+            {exercises.map((_, i) => (
+              <div key={i} className="h-1 flex-1 overflow-hidden rounded-sm bg-muted">
+                {i === index ? (
+                  <CurrentBar clock={clock} duration={duration} />
+                ) : (
+                  <div className="h-full bg-primary" style={{ width: i < index ? '100%' : '0%' }} />
+                )}
+              </div>
+            ))}
           </div>
           <button
-            onClick={handleCancelClick}
-            className="w-9 h-9 md:w-10 md:h-10 bg-background/90 backdrop-blur-sm rounded-full flex items-center justify-center hover:bg-background transition-all ml-3 border border-border shadow-sm active:scale-95 text-muted-foreground hover:text-foreground"
-            aria-label="Cancel routine"
+            type="button"
+            onClick={requestExit}
+            className="-mr-2 rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            aria-label={t('player.exitLabel')}
+            title={t('player.exitTitle')}
           >
-            <X className="w-4 h-4 md:w-5 md:h-5" />
+            <X className="h-5 w-5" />
           </button>
         </div>
+      </header>
 
-        {showCancelConfirm && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in" role="dialog" aria-modal="true" aria-labelledby="cancel-dialog-title">
-            <div className="bg-card rounded-xl p-6 max-w-sm w-full shadow-xl border border-border animate-in slide-in-from-bottom-4 duration-300">
-              <h2 id="cancel-dialog-title" className="text-lg font-bold text-foreground mb-2">Exit routine?</h2>
-              <p className="text-muted-foreground text-sm mb-4">Progress on this session will be lost. You can start again anytime.</p>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setShowCancelConfirm(false)}
-                  className="flex-1 py-3 bg-muted text-foreground rounded-lg hover:bg-primary/10 active:scale-95 transition-all font-medium"
-                >
-                  Keep going
-                </button>
-                <button
-                  onClick={confirmCancel}
-                  className="flex-1 py-3 bg-destructive text-destructive-foreground rounded-lg hover:bg-destructive/90 active:scale-95 transition-all font-semibold"
-                >
-                  Exit
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Main Exercise Card - Enhanced Layout */}
-        <div className="bg-card rounded-xl p-4 md:p-6 shadow-lg border border-border flex-1 flex flex-col min-h-0">
-          {/* Exercise Header */}
-          <div className="mb-4">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="px-2.5 py-1 bg-primary/10 text-primary rounded-full text-xs font-medium">
-                {currentExercise.category}
+      <main className="mx-auto grid w-full max-w-5xl flex-1 gap-8 px-4 py-6 sm:px-6 md:grid-cols-2 md:items-start">
+        <div className={`relative transition-opacity ${isPlaying ? '' : 'opacity-60'}`}>
+          <ExerciseAnimation
+            exerciseId={exercise.id}
+            isPlaying={isPlaying}
+            size="lg"
+            clock={clock}
+            onCueChange={soundCues ? () => chime('change') : undefined}
+            fallback={<StepText key={index} clock={clock} duration={duration} steps={exercise.instructions} />}
+          >
+            <Countdown key={index} clock={clock} duration={duration} name={exercise.name} />
+            {!isPlaying && (
+              <span className="absolute left-3 top-3 text-sm text-muted-foreground">
+                {pausedAway ? t('player.pausedAway') : t('player.paused')}
               </span>
-              <span className="text-disabled-foreground text-xs">
-                {currentIndex + 1} of {exercises.length}
-              </span>
-            </div>
-            <h1 className="text-foreground text-xl md:text-2xl font-bold leading-tight mb-1">{currentExercise.name}</h1>
-            <p className="text-muted-foreground text-sm md:text-base leading-snug">{currentExercise.description}</p>
-          </div>
-
-          {/* Animation - Full Width */}
-          <div className="bg-muted rounded-lg p-4 md:p-6 mb-4 flex items-center justify-center min-h-[200px] md:min-h-[280px]">
-            <ExerciseAnimation exerciseId={currentExercise.id} isPlaying={isPlaying} />
-          </div>
-
-          {/* Timer - Linear Progress Bar + Large Number */}
-          <div className="mb-4">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-muted-foreground text-sm font-medium">Time remaining</span>
-              <span className="text-3xl md:text-4xl font-bold text-primary">{timeRemaining}</span>
-            </div>
-            <div
-              className="w-full h-3 bg-muted rounded-full overflow-hidden"
-              role="progressbar"
-              aria-valuenow={timeRemaining}
-              aria-valuemin={0}
-              aria-valuemax={duration}
-              aria-label="Time remaining in current exercise"
-            >
-              <div
-                className="h-full bg-primary transition-all duration-1000 ease-linear rounded-full"
-                style={{ width: `${progressPercentage}%` }}
-              />
-            </div>
-            <div className="flex items-center justify-between mt-1 text-xs text-muted-foreground">
-              <span>{duration}s total</span>
-              <span className={timeRemaining <= 10 ? 'text-red-400 font-semibold' : ''} style={timeRemaining <= 10 && !prefersReducedMotion ? { animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' } : undefined}>
-                {timeRemaining <= 10 ? 'Almost done!' : ''}
-              </span>
-            </div>
-          </div>
-
-          {/* Controls - Enhanced */}
-          <div className="flex items-center justify-center gap-3 md:gap-4">
-            {currentIndex > 0 && (
-              <button
-                onClick={skipToPrevious}
-                className="w-12 h-12 md:w-14 md:h-14 bg-background text-muted-foreground rounded-full flex items-center justify-center hover:bg-muted active:scale-95 transition-all shadow-sm border border-border hover:text-foreground"
-                aria-label="Previous exercise"
-              >
-                <SkipBack className="w-5 h-5 md:w-6 md:h-6" />
-              </button>
             )}
-            <button
-              onClick={togglePlayPause}
-              className="w-16 h-16 md:w-20 md:h-20 bg-accent text-accent-foreground rounded-full flex items-center justify-center hover:bg-accent active:scale-95 transition-all shadow-lg hover:shadow-xl"
-              aria-label={isPlaying ? 'Pause' : 'Play'}
-            >
-              {isPlaying ? (
-                <Pause className="w-7 h-7 md:w-8 md:h-8" />
-              ) : (
-                <Play className="w-7 h-7 md:w-8 md:h-8 ml-1" />
-              )}
-            </button>
-            {currentIndex < exercises.length - 1 ? (
-              <button
-                onClick={skipToNext}
-                className="w-12 h-12 md:w-14 md:h-14 bg-background text-muted-foreground rounded-full flex items-center justify-center hover:bg-muted active:scale-95 transition-all shadow-sm border border-border hover:text-foreground"
-                aria-label="Next exercise"
-              >
-                <SkipForward className="w-5 h-5 md:w-6 md:h-6" />
-              </button>
-            ) : (
-              <button
-                onClick={resetCurrentExercise}
-                className="w-12 h-12 md:w-14 md:h-14 bg-background text-muted-foreground rounded-full flex items-center justify-center hover:bg-muted active:scale-95 transition-all shadow-sm border border-border hover:text-foreground"
-                aria-label="Reset timer"
-                title="Reset current exercise timer"
-              >
-                <RotateCcw className="w-5 h-5 md:w-6 md:h-6" />
-              </button>
-            )}
-          </div>
-
-          {/* Instructions - Step by step cards */}
-          <div className="mt-4 md:mt-6">
-            <h3 className="text-foreground text-sm md:text-base font-semibold mb-3">Step-by-step instructions</h3>
-            <div className="space-y-2.5 max-h-[200px] md:max-h-[240px] pr-2">
-              {currentExercise.instructions.map((instruction, idx) => (
-                <div 
-                  key={idx} 
-                  className="bg-muted rounded-lg p-3 border border-border hover:bg-primary/5 transition-colors"
-                >
-                  <div className="flex gap-3">
-                    <span className="flex-shrink-0 w-6 h-6 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-xs font-bold">
-                      {idx + 1}
-                    </span>
-                    <span className="flex-1 text-foreground text-sm leading-relaxed">{instruction}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+          </ExerciseAnimation>
         </div>
-      </div>
+
+        <div key={exercise.id}>
+          <p className="text-xs text-muted-foreground">
+            {categoryLabel(exercise.category)} · {formatSeconds(exercise.duration)}
+          </p>
+          <h1 className="mt-1 text-2xl font-semibold">{exercise.name}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{exercise.description}</p>
+
+          <div className="mt-5 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => goTo(index - 1)}
+              disabled={index === 0}
+              className={stepButton}
+              aria-label={t('player.previousLabel')}
+              title={t('player.previousTitle')}
+            >
+              <SkipBack className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={togglePlay}
+              className="inline-flex min-w-28 items-center justify-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent-hover"
+              title={isPlaying ? t('player.pauseTitle') : t('player.resumeTitle')}
+            >
+              {isPlaying ? <Pause className="h-4 w-4 fill-current" aria-hidden /> : <Play className="h-4 w-4 fill-current" aria-hidden />}
+              {isPlaying ? t('player.pause') : t('player.resume')}
+            </button>
+            <button
+              type="button"
+              onClick={() => goTo(index + 1)}
+              className={stepButton}
+              aria-label={isLast ? t('player.finishLabel') : t('player.nextLabel')}
+              title={isLast ? t('player.finishTitle') : t('player.nextTitle')}
+            >
+              <SkipForward className="h-4 w-4" />
+            </button>
+          </div>
+
+          <ol className="mt-7 list-decimal space-y-2 pl-5 text-sm marker:text-muted-foreground">
+            {exercise.instructions.map((step, i) => (
+              <li key={i} className="pl-1">
+                {step}
+              </li>
+            ))}
+          </ol>
+
+          {/* Queue and shortcuts wait until the second routine; the first needs only the figure and Pause. */}
+          {!firstRun && (
+            <>
+          <ol className="mt-7 divide-y divide-border border-y border-border text-sm" aria-label={t('player.routine')}>
+            {exercises.map((ex, i) => {
+              const done = i < index;
+              const current = i === index;
+              return (
+                <li
+                  key={ex.id + i}
+                  aria-current={current ? 'step' : undefined}
+                  className={`flex items-center gap-3 py-2 ${current ? 'font-medium' : 'text-muted-foreground'}`}
+                >
+                  <span className="flex w-4 justify-center text-xs tabular-nums">
+                    {done ? <Check className="h-3.5 w-3.5" aria-label={t('player.done')} /> : i + 1}
+                  </span>
+                  <span className="flex-1 truncate">{ex.name}</span>
+                  <span className="text-xs tabular-nums">{formatSeconds(ex.duration)}</span>
+                </li>
+              );
+            })}
+          </ol>
+
+          <p className="mt-4 hidden text-xs text-muted-foreground sm:block">
+            <kbd>{t('key.space')}</kbd> {t('player.keysPause')} · <kbd>←</kbd> <kbd>→</kbd> {t('player.keysStep')} ·{' '}
+            <kbd>Esc</kbd> {t('player.keysLeave')}
+          </p>
+            </>
+          )}
+        </div>
+      </main>
+
+      {confirmExit && (
+        <Modal
+          title={t('player.leaveTitle')}
+          onClose={() => setConfirmExit(false)}
+          footer={
+            <>
+              <button type="button" onClick={() => setConfirmExit(false)} className={secondaryButton}>
+                {t('player.keepGoing')}
+              </button>
+              <button
+                type="button"
+                onClick={onCancel}
+                className="rounded-md bg-destructive px-3 py-1.5 text-sm font-medium text-destructive-foreground transition-colors hover:opacity-90"
+              >
+                {t('player.leave')}
+              </button>
+            </>
+          }
+        >
+          <p className="text-sm text-muted-foreground">{t('player.leaveBody')}</p>
+        </Modal>
+      )}
     </div>
   );
 }

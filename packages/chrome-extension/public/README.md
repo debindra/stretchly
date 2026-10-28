@@ -14,19 +14,17 @@ The logo should be the official Stretchly logo with:
 
 ## Icons
 
-Extension toolbar icons are automatically generated from `logo.png` and placed in the `icons/` subdirectory:
-- `icon16.png` — 16x16 pixels
-- `icon48.png` — 48x48 pixels  
-- `icon128.png` — 128x128 pixels
+Extension icons are generated from the figure mark in `logo.png` (the wordmark is
+unreadable at toolbar sizes). The mark is cropped, centered on a transparent square
+and resampled into `icons/`:
+- `icon16.png`, `icon32.png` — toolbar (1x / 2x)
+- `icon48.png` — extensions page
+- `icon128.png` — install dialog and Chrome Web Store
 
 **To regenerate icons** after updating the logo, run:
 ```bash
-./scripts/generate-icons.sh
+npm run icons -w @stretchly/chrome-extension
 ```
 
-Or manually using macOS `sips`:
-```bash
-sips -z 16 16 public/logo.png --out public/icons/icon16.png
-sips -z 48 48 public/logo.png --out public/icons/icon48.png
-sips -z 128 128 public/logo.png --out public/icons/icon128.png
-```
+For sharper large icons, replace `logo.png` with a higher-resolution export; the
+script finds the mark automatically.

@@ -7,7 +7,8 @@
     "build": "npm run build --workspaces --if-present",
     "build:shared": "npm run build -w @stretchly/shared",
     "build:extension": "npm run build -w @stretchly/chrome-extension",
-    "dev:extension": "npm run dev -w @stretchly/chrome-extension"
+    "dev:extension": "npm run dev -w @stretchly/chrome-extension",
+    "typecheck": "npm run build:shared && npm run typecheck -w @stretchly/chrome-extension"
   },
   "devDependencies": {
     "@types/node": "^20.10.0"

@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 360" width="480" height="360">
+  <!-- Back view (neck to hips) in the same soft-shaded style as the other area covers. -->
+  <defs>
+    <linearGradient id="skin" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0" stop-color="#F2A26E"/>
+      <stop offset="0.2" stop-color="#FBBC89"/>
+      <stop offset="0.5" stop-color="#FEC795"/>
+      <stop offset="0.8" stop-color="#FBBC89"/>
+      <stop offset="1" stop-color="#F2A26E"/>
+    </linearGradient>
+    <linearGradient id="patch" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0" stop-color="#27A6EC"/>
+      <stop offset="0.5" stop-color="#38D2F7"/>
+      <stop offset="1" stop-color="#28B4F1"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.4"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <path id="body" d="M214 26 Q240 20 266 26 L268 64 Q271 80 302 88 C352 100 384 114 388 146 C390 166 376 180 356 192 C338 204 330 218 329 236 C328 260 346 280 352 302 C356 322 346 336 326 338 H154 C134 336 124 322 128 302 C134 280 152 260 151 236 C150 218 142 204 124 192 C104 180 90 166 92 146 C96 114 128 100 178 88 Q209 80 212 64 Z"/>
+    <clipPath id="body-clip"><use href="#body"/></clipPath>
+  </defs>
+
+  <use href="#body" fill="url(#skin)"/>
+
+  <g clip-path="url(#body-clip)" fill="none" stroke-linecap="round">
+    <!-- Neck shadow, shoulder blades, spine -->
+    <path d="M214 70 Q240 84 266 70" stroke="#EE9F6C" stroke-width="6" opacity="0.35"/>
+    <path d="M176 112 C198 132 202 158 186 180" stroke="#EE9F6C" stroke-width="5" opacity="0.45"/>
+    <path d="M304 112 C282 132 278 158 294 180" stroke="#EE9F6C" stroke-width="5" opacity="0.45"/>
+    <path d="M240 84 V330" stroke="#EE9F6C" stroke-width="5" opacity="0.4"/>
+
+    <!-- Halo + highlighted lower-back band -->
+    <ellipse cx="240" cy="252" rx="150" ry="62" fill="url(#glow)" stroke="none"/>
+    <rect x="120" y="222" width="240" height="62" rx="24" fill="url(#patch)" stroke="none" opacity="0.96"/>
+    <path d="M240 226 V280" stroke="#1F93D6" stroke-width="4" opacity="0.35"/>
+
+    <!-- Hip shading -->
+    <path d="M110 322 C190 308 290 308 370 322 V350 H110 Z" fill="#EE9F6C" stroke="none" opacity="0.3"/>
+  </g>
+</svg>

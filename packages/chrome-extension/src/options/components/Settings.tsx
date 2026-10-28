@@ -1,412 +1,524 @@
-import type { UserSettings, Theme } from '@stretchly/shared';
+import type { ColorMode, ReliefEntry, UserSettings } from '@stretchly/shared';
+import { exercises, LOCALES, painRoutines } from '@stretchly/shared';
 import * as Switch from '@radix-ui/react-switch';
-import { Lightbulb, Bell, BellOff, Clock, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { getThemeDisplayName, themes } from '../../utils/themes';
-
-interface AlarmStatus {
-  alarmExists: boolean;
-  nextFireTime: string | null;
-  nextFireIn: number | null;
-  periodInMinutes: number | null;
-  remindersEnabled: boolean;
-  reminderInterval: number;
-  hasNotificationPermission: boolean;
-}
+import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
+import { getThemeColors, getThemeDescription, getThemeDisplayName, THEME_OPTIONS } from '../../utils/themes';
+import { sendMessage, type AlarmStatus } from '../../utils/runtime';
+import { sanitizeRelief } from '../../storage/chromeStorage';
+import { toDateKey } from '../utils/formatDate';
+import { chime } from '../../utils/chime';
+import { getLocale, t, tp, type MessageKey } from '../../i18n';
+import { tNode } from '../../i18n/react';
 
 interface SettingsProps {
   settings: UserSettings;
-  onUpdateSettings: (settings: UserSettings) => void;
+  reliefData: ReliefEntry[];
+  /** Merges the patch into the latest settings (safe for rapid successive changes). */
+  onUpdateSettings: (patch: Partial<UserSettings>) => void;
   onClearRelief: () => void | Promise<void>;
+  /** Replaces the whole history with imported entries. */
+  onImportRelief: (entries: ReliefEntry[]) => void;
 }
 
-export function Settings({ settings, onUpdateSettings, onClearRelief }: SettingsProps) {
-  const [showClearConfirm, setShowClearConfirm] = useState(false);
-  const [alarmStatus, setAlarmStatus] = useState<AlarmStatus | null>(null);
-  const [testNotificationState, setTestNotificationState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
-  const [notificationError, setNotificationError] = useState<string | null>(null);
-  const clearCancelRef = useRef<HTMLButtonElement>(null);
+const REMINDER_PRESETS = [15, 30, 45, 60, 90, 120];
+const HOURS = Array.from({ length: 25 }, (_, h) => h);
+const COLOR_MODES: { mode: ColorMode; label: MessageKey }[] = [
+  { mode: 'system', label: 'settings.colorSystem' },
+  { mode: 'light', label: 'settings.colorLight' },
+  { mode: 'dark', label: 'settings.colorDark' },
+];
+const VERSION =
+  typeof chrome !== 'undefined' && chrome.runtime?.getManifest ? chrome.runtime.getManifest().version : '';
 
-  // Fetch alarm status from background script
-  const fetchAlarmStatus = useCallback(() => {
-    if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-      chrome.runtime.sendMessage({ type: 'GET_ALARM_STATUS' }, (response) => {
-        if (chrome.runtime.lastError) {
-          console.error('Failed to get alarm status:', chrome.runtime.lastError);
-          setAlarmStatus(null);
-        } else if (response) {
-          setAlarmStatus(response as AlarmStatus);
-        }
-      });
-    }
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return t('duration.s', { s: seconds });
+  const mins = Math.round(seconds / 60);
+  if (mins < 60) return t('duration.min', { m: mins });
+  const h = Math.floor(mins / 60);
+  return mins % 60 ? t('duration.hMin', { h, m: mins % 60 }) : t('duration.h', { h });
+}
+
+const intervalLabel = (m: number) =>
+  m < 60 ? tp('settings.everyMinutes', m) : m === 60 ? t('settings.everyHour') : tp('settings.everyHours', m / 60);
+/** Hour of day in the locale's own clock (12- or 24-hour). */
+const hourLabel = (h: number) =>
+  h === 0 || h === 24
+    ? t('settings.midnight')
+    : h === 12
+      ? t('settings.noon')
+      : new Date(2024, 0, 1, h).toLocaleTimeString(getLocale(), { hour: 'numeric' });
+
+const button = 'rounded-md border border-border bg-card px-3 py-1.5 text-sm font-medium transition-colors hover:bg-muted';
+const select =
+  'h-9 rounded-md border border-border bg-input pl-3 pr-8 text-sm outline-none transition-colors focus:border-primary';
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="mt-10 first:mt-8">
+      <h2 className="text-base font-semibold">{title}</h2>
+      <div className="mt-2 divide-y divide-border border-y border-border">{children}</div>
+    </section>
+  );
+}
+
+/** Label and hint on the left, control on the right; stacks when narrow. */
+function Row({ label, hint, htmlFor, children }: { label: string; hint?: ReactNode; htmlFor?: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-8 gap-y-3 py-4">
+      <div className="min-w-0 max-w-md">
+        <label htmlFor={htmlFor} className="block text-sm font-medium">
+          {label}
+        </label>
+        {hint && <div className="mt-0.5 text-sm text-muted-foreground">{hint}</div>}
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
+  );
+}
+
+function Toggle({ id, checked, onChange }: { id: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <Switch.Root
+      id={id}
+      checked={checked}
+      onCheckedChange={onChange}
+      className="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full bg-switch-background transition-colors data-[state=checked]:bg-primary"
+    >
+      <Switch.Thumb className="block h-4 w-4 translate-x-0.5 rounded-full bg-white shadow-sm transition-transform data-[state=checked]:translate-x-[18px]" />
+    </Switch.Root>
+  );
+}
+
+export function Settings({ settings, reliefData, onUpdateSettings, onClearRelief, onImportRelief }: SettingsProps) {
+  const [alarm, setAlarm] = useState<AlarmStatus | null>(null);
+  const [alarmUnavailable, setAlarmUnavailable] = useState(false);
+  const [testState, setTestState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [testError, setTestError] = useState<string | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [dataNote, setDataNote] = useState<string | null>(null);
+  const [pendingImport, setPendingImport] = useState<ReliefEntry[] | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const update = onUpdateSettings;
+  const sessionCount = reliefData.length;
+
+  const fetchAlarm = useCallback(() => {
+    sendMessage<AlarmStatus>({ type: 'GET_ALARM_STATUS' })
+      .then((s) => {
+        if (s) setAlarm(s);
+        setAlarmUnavailable(!s);
+      })
+      .catch(() => setAlarmUnavailable(true));
   }, []);
 
-  // Fetch status on mount and when settings change
+  // Refresh after settings change (give the background a moment to resync), then every 30s.
   useEffect(() => {
-    // Small delay to allow background script to sync alarm after settings change
-    const timeout = setTimeout(() => {
-      fetchAlarmStatus();
-    }, 500);
-    // Refresh status every 10 seconds to keep countdown updated
-    const interval = setInterval(fetchAlarmStatus, 10000);
+    if (!settings.remindersEnabled) return;
+    const timeout = setTimeout(fetchAlarm, 400);
+    const interval = setInterval(fetchAlarm, 30_000);
     return () => {
       clearTimeout(timeout);
       clearInterval(interval);
     };
-  }, [fetchAlarmStatus, settings.remindersEnabled, settings.reminderInterval]);
+  }, [fetchAlarm, settings.remindersEnabled, settings.reminderInterval, settings.activeFrom, settings.activeTo, settings.weekdaysOnly]);
 
-  useEffect(() => {
-    if (!showClearConfirm) return;
-    clearCancelRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        setShowClearConfirm(false);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [showClearConfirm]);
-
-  const handleClearData = () => {
-    if (showClearConfirm) {
-      void onClearRelief();
-      setShowClearConfirm(false);
-    } else {
-      setShowClearConfirm(true);
-      // Auto-hide confirmation after 5 seconds
-      setTimeout(() => setShowClearConfirm(false), 5000);
-    }
+  const resync = () => {
+    sendMessage({ type: 'SYNC_REMINDERS' })
+      .catch((err) => console.error('Sync error:', err))
+      .finally(() => setTimeout(fetchAlarm, 300));
   };
 
-  const handleTestNotification = () => {
-    if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-      setTestNotificationState('sending');
-      setNotificationError(null);
-      chrome.runtime.sendMessage({ type: 'TEST_NOTIFICATION' }, (response) => {
-        if (chrome.runtime.lastError) {
-          console.error('Test notification error:', chrome.runtime.lastError);
-          setTestNotificationState('error');
-          setNotificationError(chrome.runtime.lastError.message || 'Unknown error');
-        } else if (response?.sent) {
-          setTestNotificationState('sent');
-          setNotificationError(null);
-        } else {
-          setTestNotificationState('error');
-          setNotificationError(response?.error || 'Notification was not displayed');
+  const sendTest = () => {
+    setTestState('sending');
+    setTestError(null);
+    sendMessage<{ sent?: boolean; error?: string }>({ type: 'TEST_NOTIFICATION' })
+      .then((res) => {
+        if (res?.sent) setTestState('sent');
+        else {
+          setTestState('error');
+          setTestError(res?.error || t('settings.testNotShown'));
         }
-        // Reset state after 5 seconds (longer for error messages)
+      })
+      .catch((err: Error) => {
+        setTestState('error');
+        setTestError(err.message);
+      })
+      .finally(() =>
         setTimeout(() => {
-          setTestNotificationState('idle');
-          setNotificationError(null);
-        }, 5000);
-      });
+          setTestState('idle');
+          setTestError(null);
+        }, 5000)
+      );
+  };
+
+  const flash = (note: string) => {
+    setDataNote(note);
+    setTimeout(() => setDataNote(null), 4000);
+  };
+
+  const clearData = async () => {
+    await onClearRelief();
+    setConfirmClear(false);
+    flash(t('settings.historyDeleted'));
+  };
+
+  const exportData = () => {
+    const blob = new Blob([JSON.stringify({ app: 'stretchly', version: 1, sessions: reliefData }, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `stretchly-history-${toDateKey()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const readImport = async (file: File) => {
+    try {
+      const parsed = JSON.parse(await file.text());
+      const entries = sanitizeRelief(Array.isArray(parsed) ? parsed : parsed?.sessions);
+      if (entries.length === 0) {
+        flash(t('settings.importEmpty'));
+        return;
+      }
+      setPendingImport(entries);
+    } catch {
+      flash(t('settings.importInvalid'));
+    } finally {
+      if (fileRef.current) fileRef.current.value = '';
     }
   };
 
-  const handleForceSync = () => {
-    if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-      setAlarmStatus(null); // Show loading state
-      chrome.runtime.sendMessage({ type: 'SYNC_REMINDERS' }, () => {
-        if (chrome.runtime.lastError) {
-          console.error('Sync error:', chrome.runtime.lastError);
-        }
-        // Fetch updated status after sync
-        setTimeout(fetchAlarmStatus, 300);
-      });
-    }
-  };
+  let status: ReactNode;
+  if (!alarm) {
+    status = alarmUnavailable ? t('settings.statusUnavailable') : t('settings.checking');
+  } else if (!alarm.hasNotificationPermission) {
+    status = <span className="text-warning">{t('settings.notificationsOff')}</span>;
+  } else if (alarm.alarmExists) {
+    status = (
+      <>
+        {tNode('settings.nextReminder', {
+          time: (
+            <span className="text-foreground">
+              {alarm.nextFireIn != null && alarm.nextFireIn >= 0 ? formatDuration(alarm.nextFireIn) : t('settings.aMoment')}
+            </span>
+          ),
+        })}
+        {!alarm.withinActiveHours && ` ${t('settings.outsideHours')}`}
+      </>
+    );
+  } else {
+    status = (
+      <span className="text-warning">
+        {t('settings.noReminder')}{' '}
+        <button type="button" onClick={resync} className="underline underline-offset-2">
+          {t('settings.scheduleIt')}
+        </button>
+      </span>
+    );
+  }
 
-  const formatTimeUntilFire = (seconds: number | null): string => {
-    if (seconds === null || seconds < 0) return 'calculating...';
-    if (seconds < 60) return `${seconds}s`;
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
-  };
-
-  const reminderPresets = [15, 30, 45, 60, 90, 120];
-
-  const themeOptions: Theme[] = ['fast-wellness', 'calm', 'energizer'];
+  const testLabel = t(
+    ({ idle: 'settings.testIdle', sending: 'settings.testSending', sent: 'settings.testSent', error: 'settings.testError' } as const)[
+      testState
+    ]
+  );
 
   return (
-    <div className="space-y-6 pb-6">
-      {/* Theme + Reminders */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Theme Selection */}
-        <div className="bg-card rounded-xl p-6 shadow-sm border border-border">
-          <h2 className="text-foreground text-lg font-bold mb-4">Theme</h2>
-          <div className="flex gap-3">
-            {themeOptions.map((theme) => {
-              const colors = themes[theme];
-              const isSelected = settings.theme === theme;
+    <div className="mx-auto max-w-2xl">
+      <h1 className="text-2xl font-semibold">{t('nav.settings')}</h1>
+      <p className="mt-1 text-sm text-muted-foreground">{t('settings.saved')}</p>
+
+      <Section title={t('settings.reminders')}>
+        <Row label={t('settings.stretchReminders')} hint={t('settings.stretchRemindersHint')} htmlFor="reminders-switch">
+          <Toggle id="reminders-switch" checked={settings.remindersEnabled} onChange={(v) => update({ remindersEnabled: v })} />
+        </Row>
+
+        {settings.remindersEnabled && (
+          <>
+            <Row label={t('settings.interval')} htmlFor="reminder-interval">
+              <select
+                id="reminder-interval"
+                value={settings.reminderInterval}
+                onChange={(e) => update({ reminderInterval: Number(e.target.value) })}
+                className={select}
+              >
+                {REMINDER_PRESETS.map((m) => (
+                  <option key={m} value={m}>
+                    {intervalLabel(m)}
+                  </option>
+                ))}
+              </select>
+            </Row>
+            <Row label={t('settings.reminderHours')} hint={t('settings.reminderHoursHint')} htmlFor="active-from">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <select
+                  id="active-from"
+                  aria-label={t('settings.from')}
+                  value={settings.activeFrom}
+                  onChange={(e) => update({ activeFrom: Number(e.target.value) })}
+                  className={select}
+                >
+                  {HOURS.slice(0, 24).map((h) => (
+                    <option key={h} value={h}>
+                      {hourLabel(h)}
+                    </option>
+                  ))}
+                </select>
+                {t('settings.hoursTo')}
+                <select
+                  aria-label={t('settings.until')}
+                  value={settings.activeTo}
+                  onChange={(e) => update({ activeTo: Number(e.target.value) })}
+                  className={select}
+                >
+                  {HOURS.slice(1).map((h) => (
+                    <option key={h} value={h}>
+                      {hourLabel(h)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </Row>
+            <Row label={t('settings.weekdaysOnly')} hint={t('settings.weekdaysOnlyHint')} htmlFor="weekdays-switch">
+              <Toggle id="weekdays-switch" checked={settings.weekdaysOnly} onChange={(v) => update({ weekdaysOnly: v })} />
+            </Row>
+            <Row
+              label={t('settings.status')}
+              hint={
+                <>
+                  <span aria-live="polite">{status}</span>
+                  {testError && <span className="block text-destructive">{testError}</span>}
+                </>
+              }
+            >
+              <button
+                type="button"
+                onClick={sendTest}
+                disabled={testState === 'sending'}
+                className={`${button} disabled:cursor-wait ${
+                  testState === 'sent' ? 'text-success' : testState === 'error' ? 'text-destructive' : ''
+                }`}
+              >
+                {testLabel}
+              </button>
+            </Row>
+          </>
+        )}
+      </Section>
+
+      <Section title={t('settings.routines')}>
+        <Row label={t('settings.soundCues')} hint={t('settings.soundCuesHint')} htmlFor="sound-switch">
+          <div className="flex items-center gap-3">
+            {settings.soundCues && (
+              <button type="button" onClick={() => chime('start')} className="text-sm text-muted-foreground hover:text-foreground">
+                {t('settings.playSample')}
+              </button>
+            )}
+            <Toggle id="sound-switch" checked={settings.soundCues} onChange={(v) => update({ soundCues: v })} />
+          </div>
+        </Row>
+      </Section>
+
+      <Section title={t('settings.appearance')}>
+        <Row label={t('settings.language')} hint={t('settings.languageHint')} htmlFor="language">
+          <select
+            id="language"
+            value={settings.language}
+            onChange={(e) => update({ language: e.target.value as UserSettings['language'] })}
+            className={select}
+          >
+            <option value="auto">{`🌐\u2002${t('settings.matchBrowser')}`}</option>
+            {LOCALES.map((l) => (
+              <option key={l.code} value={l.code} lang={l.code}>
+                {`${l.flag}\u2002${l.name}`}
+              </option>
+            ))}
+          </select>
+        </Row>
+        <Row label={t('settings.colorMode')} hint={t('settings.colorModeHint')}>
+          <div
+            className="inline-flex divide-x divide-border rounded-md border border-border"
+            role="radiogroup"
+            aria-label={t('settings.colorMode')}
+          >
+            {COLOR_MODES.map(({ mode, label }) => {
+              const active = settings.colorMode === mode;
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => update({ colorMode: mode })}
+                  className={`px-3 py-1.5 text-sm transition-colors first:rounded-l-md last:rounded-r-md ${
+                    active ? 'bg-muted font-medium text-foreground' : 'bg-card text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {t(label)}
+                </button>
+              );
+            })}
+          </div>
+        </Row>
+        <div className="py-4">
+          <p className="text-sm font-medium" id="theme-label">
+            {t('settings.theme')}
+          </p>
+          <p className="mt-0.5 text-sm text-muted-foreground">{t('settings.themeHint')}</p>
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2" role="radiogroup" aria-labelledby="theme-label">
+            {THEME_OPTIONS.map((theme) => {
+              const active = settings.theme === theme;
               return (
                 <button
                   key={theme}
-                  onClick={() => onUpdateSettings({ ...settings, theme })}
-                  className={`flex-1 p-4 rounded-lg border-2 transition-all duration-200 cursor-pointer ${
-                    isSelected
-                      ? 'border-primary bg-primary/5 shadow-sm'
-                      : 'border-border hover:border-primary/40 hover:bg-primary/5 active:scale-95'
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => update({ theme })}
+                  className={`flex items-center gap-3 rounded-md border p-3 text-left transition-colors ${
+                    active ? 'border-primary ring-1 ring-primary' : 'border-border hover:border-muted-foreground'
                   }`}
-                  title={getThemeDisplayName(theme)}
                 >
-                  <div className="w-full h-16 rounded mb-2 flex items-center justify-center gap-2" style={{ backgroundColor: colors.primary }}>
-                    <div className="w-6 h-6 rounded" style={{ backgroundColor: colors.accent }} />
-                  </div>
-                  <p className="text-foreground text-sm font-medium">{getThemeDisplayName(theme)}</p>
+                  {/* Page, brand and call-to-action colors; light mode then dark mode. */}
+                  <span className="flex shrink-0 gap-1" aria-hidden>
+                    {(['light', 'dark'] as const).map((mode) => {
+                      const c = getThemeColors(theme, mode);
+                      return (
+                        <span key={mode} className="flex overflow-hidden rounded-sm border border-border">
+                          <span className="h-7 w-3" style={{ backgroundColor: c.background }} />
+                          <span className="h-7 w-3" style={{ backgroundColor: c.primary }} />
+                          <span className="h-7 w-3" style={{ backgroundColor: c.accent }} />
+                        </span>
+                      );
+                    })}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium">{getThemeDisplayName(theme)}</span>
+                    <span className="block text-xs text-muted-foreground">{getThemeDescription(theme)}</span>
+                  </span>
                 </button>
               );
             })}
           </div>
         </div>
+      </Section>
 
-        {/* Reminders */}
-        <div className="bg-card rounded-xl p-6 shadow-sm border border-border">
-          <h2 className="text-foreground text-lg font-bold mb-4">Reminders</h2>
-
-        <div className="space-y-6">
-          <div className="flex items-center justify-between p-4 bg-muted rounded-xl">
-            <label className="text-foreground font-medium">
-              Enable reminders
-            </label>
-            <Switch.Root
-              checked={settings.remindersEnabled}
-              onCheckedChange={checked =>
-                onUpdateSettings({ ...settings, remindersEnabled: checked })
-              }
-              className="relative w-14 h-8 rounded-full transition-colors duration-200 data-[state=checked]:bg-primary data-[state=unchecked]:bg-[var(--switch-background)] data-[state=checked]:shadow-md outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 flex items-center overflow-hidden"
-              aria-label="Toggle reminders"
-            >
-              <Switch.Thumb className="switch-thumb block w-6 h-6 bg-background rounded-full shadow-sm transition-transform duration-200 will-change-transform" />
-            </Switch.Root>
-          </div>
-
-          {settings.remindersEnabled && (
-            <div className="p-4 bg-muted rounded-xl animate-in fade-in slide-in-from-bottom-2">
-              <div className="flex items-center justify-between mb-4">
-                <label htmlFor="reminder-interval" className="text-foreground font-medium">
-                  Reminder interval
-                </label>
-                <span className="text-2xl font-bold text-primary">{settings.reminderInterval} min</span>
-              </div>
-              <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
-                {reminderPresets.map(preset => (
-                  <button
-                    key={preset}
-                    onClick={() => onUpdateSettings({ ...settings, reminderInterval: preset })}
-                    className={`py-2.5 px-3 rounded-lg border-2 transition-all duration-200 text-sm font-medium cursor-pointer ${
-                      settings.reminderInterval === preset
-                        ? 'border-primary bg-primary/10 text-primary shadow-sm'
-                        : 'border-border text-foreground hover:border-primary/40 hover:bg-primary/5 active:scale-95'
-                    }`}
-                  >
-                    {preset} min
-                  </button>
-                ))}
-              </div>
-
-              {/* Alarm Status Indicator */}
-              <div className="mt-4 pt-4 border-t border-border">
-                {alarmStatus ? (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        {alarmStatus.alarmExists ? (
-                          <>
-                            <Bell className="w-4 h-4 text-green-600" />
-                            <span className="text-sm text-green-600 font-medium">Alarm active</span>
-                          </>
-                        ) : (
-                          <>
-                            <BellOff className="w-4 h-4 text-amber-600" />
-                            <span className="text-sm text-amber-600 font-medium">Alarm not set</span>
-                          </>
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleForceSync}
-                        className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
-                        title="Force sync alarm"
-                      >
-                        <RefreshCw className="w-3 h-3" />
-                        Sync
-                      </button>
-                    </div>
-                    {alarmStatus.alarmExists && alarmStatus.nextFireIn !== null && (
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Clock className="w-4 h-4" />
-                        <span>Next reminder in: <strong className="text-foreground">{formatTimeUntilFire(alarmStatus.nextFireIn)}</strong></span>
-                      </div>
-                    )}
-                    {!alarmStatus.hasNotificationPermission && (
-                      <div className="flex items-center gap-2 text-sm text-amber-600">
-                        <AlertCircle className="w-4 h-4" />
-                        <span>Notification permission not granted</span>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Clock className="w-4 h-4 animate-spin" />
-                    <span>Checking alarm status...</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Test Notification Button */}
-              <div className="mt-4 pt-4 border-t border-border space-y-2">
-                <button
-                  type="button"
-                  onClick={handleTestNotification}
-                  disabled={testNotificationState === 'sending'}
-                  className={`flex items-center gap-2 text-sm font-medium transition-colors ${
-                    testNotificationState === 'sending' 
-                      ? 'text-muted-foreground cursor-wait'
-                      : testNotificationState === 'sent'
-                      ? 'text-green-600'
-                      : testNotificationState === 'error'
-                      ? 'text-red-600'
-                      : 'text-primary hover:text-primary/80'
-                  }`}
-                >
-                  {testNotificationState === 'sending' && (
-                    <>
-                      <Clock className="w-4 h-4 animate-spin" />
-                      Sending...
-                    </>
-                  )}
-                  {testNotificationState === 'sent' && (
-                    <>
-                      <CheckCircle2 className="w-4 h-4" />
-                      Notification sent!
-                    </>
-                  )}
-                  {testNotificationState === 'error' && (
-                    <>
-                      <AlertCircle className="w-4 h-4" />
-                      Failed to send
-                    </>
-                  )}
-                  {testNotificationState === 'idle' && (
-                    <>
-                      <Bell className="w-4 h-4" />
-                      Send a test reminder now
-                    </>
-                  )}
-                </button>
-                {notificationError && (
-                  <div className="text-xs text-red-600 bg-red-50 dark:bg-red-900/20 p-3 rounded-lg">
-                    <p className="font-medium mb-1">Notification blocked</p>
-                    <p>{notificationError}</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-        </div>
-      </div>
-
-      {/* Preferred Duration */}
-      <div className="bg-card rounded-xl p-6 shadow-sm border border-border">
-        <h2 className="text-foreground text-lg font-bold mb-4">Session Duration</h2>
-
-        <div className="flex gap-3">
-          {[1, 2, 3].map(duration => (
-            <button
-              key={duration}
-              onClick={() => onUpdateSettings({ ...settings, preferredDuration: duration })}
-              className={`flex-1 py-4 rounded-lg border-2 transition-all duration-200 cursor-pointer ${
-                settings.preferredDuration === duration
-                  ? 'border-primary bg-primary/5 text-primary shadow-sm'
-                  : 'border-border text-foreground hover:border-primary/40 hover:bg-primary/5 active:scale-95'
-              }`}
-            >
-              <div className="text-2xl font-bold mb-1">{duration}</div>
-              <div className="text-xs font-medium">minute{duration !== 1 ? 's' : ''}</div>
+      <Section title={t('settings.data')}>
+        <Row label={t('settings.backup')} hint={t('settings.backupHint')}>
+          <div className="flex gap-2">
+            <button type="button" onClick={exportData} disabled={sessionCount === 0} className={`${button} disabled:opacity-40`}>
+              {t('settings.export')}
             </button>
-          ))}
-        </div>
-      </div>
-
-      {/* About */}
-      <div className="bg-card rounded-xl p-6 shadow-sm border border-border">
-        <h2 className="text-foreground text-lg font-bold mb-4">About</h2>
-        <p className="text-muted-foreground mb-6 leading-relaxed">
-          Stretchly is a moment-based, micro-mobility system designed for desk workers who need
-          instant relief without leaving their workspace. Each routine is 60-180 seconds,
-          chair-only, and office-safe.
-        </p>
-        <div className="space-y-3 text-sm">
-          <div className="flex justify-between items-center py-3 px-4 bg-muted rounded-lg">
-            <span className="text-muted-foreground">Version</span>
-            <span className="text-foreground font-semibold">1.0.0</span>
-          </div>
-          <div className="flex justify-between items-center py-3 px-4 bg-muted rounded-lg">
-            <span className="text-muted-foreground">Exercise library</span>
-            <span className="text-foreground font-semibold">18 exercises</span>
-          </div>
-          <div className="flex justify-between items-center py-3 px-4 bg-muted rounded-lg">
-            <span className="text-muted-foreground">Focus areas</span>
-            <span className="text-foreground font-semibold">6 pain zones</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Tips */}
-      <div className="bg-primary/5 rounded-xl p-6 border border-primary/20">
-        <div className="flex items-center gap-2 mb-4">
-          <Lightbulb className="w-5 h-5 text-primary" />
-          <h3 className="text-foreground font-semibold">Tips</h3>
-        </div>
-        <ul className="space-y-2 text-sm text-foreground">
-          <li>Consistency beats intensity — short daily sessions are more effective</li>
-          <li>Listen to your body — never push through sharp pain</li>
-          <li>Regular breaks improve focus and productivity</li>
-        </ul>
-      </div>
-
-      {/* Data Management */}
-      <div className="bg-card rounded-xl p-6 shadow-sm border-2 border-red-100 dark:border-red-900/30">
-        <h2 className="text-foreground text-lg font-bold mb-4">Data Management</h2>
-
-        {!showClearConfirm ? (
-          <>
-            <button
-              onClick={handleClearData}
-              className="w-full bg-red-50 dark:bg-red-900/10 text-red-700 dark:text-red-400 py-4 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/20 active:scale-95 transition-all duration-200 border-2 border-red-200 dark:border-red-800 font-semibold shadow-sm hover:shadow-md"
-            >
-              Clear All Relief Data
+            <button type="button" onClick={() => fileRef.current?.click()} className={button}>
+              {t('settings.import')}
             </button>
-            <p className="text-xs text-muted-foreground mt-3 text-center">
-              This will permanently delete all your relief tracking and cannot be undone.
+            <input
+              ref={fileRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void readImport(file);
+              }}
+            />
+          </div>
+        </Row>
+        {pendingImport && (
+          <div className="flex flex-wrap items-center justify-between gap-3 py-4 text-sm">
+            <p>
+              {sessionCount
+                ? t('settings.replacePrompt', {
+                    current: tp('count.sessions', sessionCount),
+                    incoming: tp('count.sessions', pendingImport.length),
+                  })
+                : t('settings.replacePromptEmpty', { incoming: tp('count.sessions', pendingImport.length) })}
             </p>
-          </>
-        ) : (
-          <div className="space-y-3 animate-in fade-in slide-in-from-bottom-2" role="alertdialog" aria-modal="true" aria-labelledby="clear-confirm-title">
-            <p id="clear-confirm-title" className="text-foreground font-medium text-center">
-              Are you sure? This action cannot be undone.
-            </p>
-            <div className="flex gap-3">
-              <button
-                ref={clearCancelRef}
-                onClick={() => setShowClearConfirm(false)}
-                className="flex-1 py-3 bg-muted text-foreground rounded-lg hover:bg-primary/10 active:scale-95 transition-all duration-200 font-medium"
-              >
-                Cancel
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setPendingImport(null)} className={button}>
+                {t('common.cancel')}
               </button>
               <button
-                onClick={handleClearData}
-                className="flex-1 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 active:scale-95 transition-all duration-200 font-semibold shadow-md"
+                type="button"
+                onClick={() => {
+                  onImportRelief(pendingImport);
+                  flash(t('settings.imported', { sessions: tp('count.sessions', pendingImport.length) }));
+                  setPendingImport(null);
+                }}
+                className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent-hover"
               >
-                Delete all data
+                {t('settings.replace')}
               </button>
             </div>
           </div>
         )}
-      </div>
+        <Row
+          label={t('settings.history')}
+          hint={
+            dataNote ??
+            (sessionCount === 0
+              ? t('settings.historyEmpty')
+              : t('settings.historyCount', { sessions: tp('count.sessions', sessionCount) }))
+          }
+        >
+          {confirmClear ? (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">
+                {t('settings.deleteConfirm', { sessions: tp('count.sessions', sessionCount) })}
+              </span>
+              <button type="button" onClick={() => setConfirmClear(false)} className={button}>
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={() => void clearData()}
+                className="rounded-md bg-destructive px-3 py-1.5 text-sm font-medium text-destructive-foreground transition-colors hover:opacity-90"
+              >
+                {t('common.delete')}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmClear(true)}
+              disabled={sessionCount === 0}
+              className={`${button} text-destructive disabled:opacity-40`}
+            >
+              {t('settings.deleteHistory')}
+            </button>
+          )}
+        </Row>
+      </Section>
+
+      <Section title={t('settings.about')}>
+        <div className="py-4 text-sm">
+          <p className="max-w-prose text-muted-foreground">{t('settings.aboutBody')}</p>
+          <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 text-sm text-muted-foreground">
+            <dt>
+              <kbd>Alt</kbd> + {tNode('settings.keyRange', { from: <kbd>1</kbd>, to: <kbd>4</kbd> })}
+            </dt>
+            <dd>{t('settings.keySections')}</dd>
+            <dt>
+              <kbd>{t('key.space')}</kbd>
+            </dt>
+            <dd>{t('settings.keyPause')}</dd>
+            <dt>
+              <kbd>←</kbd> <kbd>→</kbd>
+            </dt>
+            <dd>{t('settings.keyStep')}</dd>
+            <dt>
+              <kbd>Esc</kbd>
+            </dt>
+            <dd>{t('settings.keyLeave')}</dd>
+          </dl>
+          <p className="mt-4 text-xs text-muted-foreground">
+            {VERSION && <>{t('settings.version', { version: VERSION })} · </>}
+            {tp('count.exercises', exercises.length)} · {tp('count.areas', Object.keys(painRoutines).length)}
+          </p>
+        </div>
+      </Section>
     </div>
   );
 }

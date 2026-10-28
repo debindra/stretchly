@@ -1,41 +1,68 @@
-import { useState, useEffect, useCallback } from 'react';
-import type { Exercise, ReliefEntry, UserSettings, View } from '@stretchly/shared';
+import { useState, useEffect, useCallback, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import type { Exercise, ReliefEntry, SavedRoutine, UserSettings, View } from '@stretchly/shared';
 import { DEFAULT_SETTINGS } from '@stretchly/shared';
-import { chromeStorageAdapter } from '../storage/chromeStorage';
+import { chromeStorageAdapter, getSavedRoutines, setSavedRoutines } from '../storage/chromeStorage';
 import { Dashboard } from './components/Dashboard';
 import { ExerciseLibrary } from './components/ExerciseLibrary';
 import { RoutinePlayer } from './components/RoutinePlayer';
 import { ProgressTracker } from './components/ProgressTracker';
 import { Settings } from './components/Settings';
-import { Activity, Library, TrendingUp, Settings as SettingsIcon, AlertCircle } from 'lucide-react';
 import { LogoImg } from '../components/LogoImg';
-import { applyTheme } from '../utils/themes';
+import { applyTheme, onSystemModeChange } from '../utils/themes';
+import { toDateKey } from './utils/formatDate';
+import { parseOptionsHash } from '../utils/painAreas';
+import { localeFromSetting, setLocale, t, type MessageKey } from '../i18n';
+import { LocaleContext } from '../i18n/react';
 
 const storage = chromeStorageAdapter;
 
+const NAV: { view: View; label: MessageKey }[] = [
+  { view: 'dashboard', label: 'nav.relief' },
+  { view: 'library', label: 'nav.library' },
+  { view: 'progress', label: 'nav.progress' },
+  { view: 'settings', label: 'nav.settings' },
+];
+const VIEWS = NAV.map((n) => n.view);
+
+function viewFromHash(): View {
+  const { view } = parseOptionsHash(window.location.hash);
+  return VIEWS.includes(view as View) ? (view as View) : 'dashboard';
+}
+
+interface ActiveRoutine {
+  exercises: Exercise[];
+  painArea: string;
+  beforePain: number;
+}
+
 export default function App() {
-  const [currentView, setCurrentView] = useState<View>('dashboard');
-  const [activeExercises, setActiveExercises] = useState<Exercise[]>([]);
-  const [activePainArea, setActivePainArea] = useState<string>('');
-  const [beforePainLevel, setBeforePainLevel] = useState<number>(0);
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentView, setCurrentView] = useState<View>(viewFromHash);
+  const [routine, setRoutine] = useState<ActiveRoutine | null>(null);
   const [reliefData, setReliefData] = useState<ReliefEntry[]>([]);
   const [settings, setSettings] = useState<UserSettings>({ ...DEFAULT_SETTINGS });
+  const [savedRoutines, setSavedRoutinesState] = useState<SavedRoutine[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Bumped when the URL hash changes from outside (popup, notification), so views re-read it.
+  const [hashNav, setHashNav] = useState(0);
+
+  // Set before children render, so every `t()` below uses the chosen language.
+  const locale = localeFromSetting(settings.language);
+  setLocale(locale);
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
 
   const loadData = useCallback(async () => {
     setError(null);
     try {
-      const [relief, s] = await Promise.all([
-        storage.getRelief(),
-        storage.getSettings(),
-      ]);
+      const [relief, s, routines] = await Promise.all([storage.getRelief(), storage.getSettings(), getSavedRoutines()]);
       setReliefData(relief);
       setSettings(s);
+      setSavedRoutinesState(routines);
     } catch (err) {
       console.error('Error loading data:', err);
-      setError('Failed to load data. Please try again.');
+      setError(err instanceof Error ? err.message : t('app.storageNoResponse'));
     } finally {
       setLoading(false);
     }
@@ -47,316 +74,233 @@ export default function App() {
 
   useEffect(() => {
     if (loading) return;
-    storage.setRelief(reliefData).catch((err) => {
-      console.error('Error saving relief data:', err);
-    });
+    storage.setRelief(reliefData).catch((err) => console.error('Error saving relief data:', err));
   }, [reliefData, loading]);
 
   useEffect(() => {
     if (loading) return;
-    storage.setSettings(settings).catch((err) => {
-      console.error('Error saving settings:', err);
-    });
+    storage.setSettings(settings).catch((err) => console.error('Error saving settings:', err));
   }, [settings, loading]);
 
-  // Apply theme when settings change or on initial load
   useEffect(() => {
     if (loading) return;
-    applyTheme(settings.theme);
-  }, [settings.theme, loading]);
+    setSavedRoutines(savedRoutines).catch((err) => console.error('Error saving routines:', err));
+  }, [savedRoutines, loading]);
 
-  // Hash routing: initial view from #dashboard, #library, etc.
   useEffect(() => {
     if (loading) return;
-    const hash = window.location.hash.slice(1).toLowerCase().replace(/^#/, '');
-    const views: View[] = ['dashboard', 'library', 'progress', 'settings'];
-    if (hash && views.includes(hash as View)) setCurrentView(hash as View);
-  }, [loading]);
+    applyTheme(settings.theme, settings.colorMode);
+    if (settings.colorMode !== 'system') return;
+    return onSystemModeChange(() => applyTheme(settings.theme, settings.colorMode));
+  }, [settings.theme, settings.colorMode, loading]);
 
-  // Prevent automatic scrolling when hash changes
+  // The popup and reminder notifications reuse an open tab by changing its hash.
   useEffect(() => {
-    const handleHashChange = () => {
-      // Prevent scroll to top when hash changes
+    const onHashChange = () => {
+      setCurrentView(viewFromHash());
+      setHashNav((n) => n + 1);
       window.scrollTo(0, 0);
     };
-    window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  // Functional update so rapid successive changes never overwrite each other.
+  const updateSettings = useCallback((patch: Partial<UserSettings>) => {
+    setSettings((prev) => ({ ...prev, ...patch }));
   }, []);
 
   const navigateTo = useCallback((v: View) => {
     setCurrentView(v);
-    // Use replaceState to prevent scroll restoration
-    const url = new URL(window.location.href);
-    url.hash = v;
-    window.history.replaceState(null, '', url.toString());
+    window.history.replaceState(null, '', `#${v}`);
+    window.scrollTo(0, 0);
   }, []);
 
-  // Keyboard navigation: Alt+1–4 and Arrow Left/Right
+  // Alt+1–4 jumps between sections from anywhere.
   useEffect(() => {
-    if (loading || isPlaying) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const views: View[] = ['dashboard', 'library', 'progress', 'settings'];
-      const currentIndex = views.indexOf(currentView);
-
-      if (e.altKey && !e.ctrlKey && !e.metaKey && ['1', '2', '3', '4'].includes(e.key)) {
+    if (loading || routine) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey) return;
+      const idx = Number(e.key) - 1;
+      if (idx >= 0 && idx < VIEWS.length) {
         e.preventDefault();
-        const idx = Number(e.key) - 1;
-        if (idx >= 0 && idx < views.length) navigateTo(views[idx]);
-        return;
-      }
-      if (e.ctrlKey || e.metaKey) return;
-
-      if (e.key === 'ArrowRight' && currentIndex < views.length - 1) {
-        e.preventDefault();
-        navigateTo(views[currentIndex + 1]);
-      } else if (e.key === 'ArrowLeft' && currentIndex > 0) {
-        e.preventDefault();
-        navigateTo(views[currentIndex - 1]);
+        navigateTo(VIEWS[idx]);
       }
     };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [loading, routine, navigateTo]);
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentView, loading, isPlaying, navigateTo]);
+  // Arrow keys move between tabs only while the tab bar has focus (WAI-ARIA tabs pattern).
+  const onTabKeyDown = (e: ReactKeyboardEvent) => {
+    const idx = VIEWS.indexOf(currentView);
+    let next = -1;
+    if (e.key === 'ArrowRight') next = (idx + 1) % VIEWS.length;
+    else if (e.key === 'ArrowLeft') next = (idx - 1 + VIEWS.length) % VIEWS.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = VIEWS.length - 1;
+    if (next < 0) return;
+    e.preventDefault();
+    navigateTo(VIEWS[next]);
+    document.getElementById(`${VIEWS[next]}-tab`)?.focus();
+  };
 
-  const startRoutine = useCallback(
-    (exercises: Exercise[], painArea: string, painLevel: number) => {
-      setActiveExercises(exercises);
-      setActivePainArea(painArea);
-      setBeforePainLevel(painLevel);
-      setIsPlaying(true);
-    },
-    []
-  );
+  const startRoutine = useCallback((exercises: Exercise[], painArea: string, beforePain: number) => {
+    setRoutine({ exercises, painArea, beforePain });
+  }, []);
 
   const completeRoutine = useCallback(
-    (afterPainLevel: number) => {
-      const today = new Date().toISOString().split('T')[0];
-      const newEntry: ReliefEntry = {
-        date: today,
-        painArea: activePainArea,
-        beforePain: beforePainLevel,
-        afterPain: afterPainLevel,
-        exerciseIds: activeExercises.map((ex) => ex.id),
-      };
-      setReliefData((prev) => [...prev, newEntry]);
-      setIsPlaying(false);
-      setCurrentView('dashboard');
+    (afterPain: number, rated: boolean) => {
+      if (!routine) return;
+      const now = new Date();
+      setReliefData((prev) => [
+        ...prev,
+        {
+          date: toDateKey(now),
+          time: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
+          painArea: routine.painArea,
+          beforePain: routine.beforePain,
+          afterPain: rated ? afterPain : routine.beforePain,
+          exerciseIds: routine.exercises.map((ex) => ex.id),
+          ...(rated ? {} : { rated: false }),
+        },
+      ]);
+      setRoutine(null);
+      navigateTo('dashboard');
     },
-    [activePainArea, beforePainLevel, activeExercises]
+    [routine, navigateTo]
   );
-
-  const cancelRoutine = useCallback(() => {
-    setIsPlaying(false);
-    setActiveExercises([]);
-    setActivePainArea('');
-    setBeforePainLevel(0);
-  }, []);
 
   const handleClearRelief = useCallback(async () => {
     await storage.clearRelief();
     setReliefData([]);
-    window.location.reload();
+  }, []);
+
+  const handleImportRelief = useCallback((entries: ReliefEntry[]) => setReliefData(entries), []);
+
+  const saveRoutine = useCallback((name: string, exerciseIds: string[]) => {
+    setSavedRoutinesState((prev) => [...prev, { id: `r${Date.now().toString(36)}`, name, exerciseIds }]);
+  }, []);
+
+  const deleteRoutine = useCallback((id: string) => {
+    setSavedRoutinesState((prev) => prev.filter((r) => r.id !== id));
   }, []);
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-primary/20 border-t-primary rounded-full animate-spin mx-auto mb-4"></div>
-          <div className="text-muted-foreground font-medium">Loading…</div>
-        </div>
-      </div>
-    );
+    // Storage resolves in a few ms; a blank page beats a spinner that flashes.
+    return <div className="min-h-screen bg-background" aria-busy="true" />;
   }
 
   if (error) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <div className="text-center max-w-md">
-          <div className="w-16 h-16 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center mx-auto mb-4">
-            <AlertCircle className="w-8 h-8 text-red-600 dark:text-red-400" />
-          </div>
-          <h2 className="text-xl font-bold text-foreground mb-2">Something went wrong</h2>
-          <p className="text-muted-foreground mb-4">{error}</p>
-          <div className="flex flex-wrap gap-3 justify-center">
-            <button
-              onClick={() => { setLoading(true); void loadData(); }}
-              className="px-6 py-3 bg-accent text-accent-foreground rounded-lg hover:bg-accent transition-colors font-medium"
-            >
-              Try again
-            </button>
-            <button
-              onClick={() => window.location.reload()}
-              className="px-6 py-3 bg-muted text-foreground rounded-lg hover:bg-primary/10 transition-colors font-medium border border-border"
-            >
-              Refresh page
-            </button>
-          </div>
-        </div>
+      <div className="mx-auto max-w-5xl px-4 py-16 sm:px-6">
+        <h1 className="text-lg font-semibold">{t('app.loadError')}</h1>
+        <p className="mt-1 max-w-md text-sm text-muted-foreground">{error}</p>
+        <button
+          onClick={() => {
+            setLoading(true);
+            void loadData();
+          }}
+          className="mt-5 rounded-md border border-border bg-card px-3.5 py-1.5 text-sm font-medium hover:bg-muted"
+        >
+          {t('app.tryAgain')}
+        </button>
       </div>
     );
   }
 
-  if (isPlaying) {
+  if (routine) {
     return (
-      <RoutinePlayer
-        exercises={activeExercises}
-        painArea={activePainArea}
-        beforePainLevel={beforePainLevel}
-        onComplete={completeRoutine}
-        onCancel={cancelRoutine}
-      />
+      <LocaleContext.Provider value={locale}>
+        <RoutinePlayer
+          exercises={routine.exercises}
+          painArea={routine.painArea}
+          beforePainLevel={routine.beforePain}
+          soundCues={settings.soundCues}
+          firstRun={reliefData.length === 0}
+          onComplete={completeRoutine}
+          onCancel={() => setRoutine(null)}
+        />
+      </LocaleContext.Provider>
     );
   }
 
   return (
-    <div className="min-h-screen bg-background overflow-hidden">
-      <div className="max-w-5xl mx-auto px-3 md:px-4 py-3 md:py-4 h-screen flex flex-col overflow-hidden">
-        <header className="mb-2 md:mb-3 flex-shrink-0">
-          <LogoImg height={28} maxWidth={160} className="mb-1" />
-          <p className="text-muted-foreground text-xs font-medium hidden md:block">
-            Instant relief for desk workers — in under 2 minutes
-          </p>
+    <LocaleContext.Provider value={locale}>
+      <div className="min-h-screen bg-background">
+        <header className="sticky top-0 z-30 border-b border-border bg-background">
+          <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-8 px-4 sm:px-6">
+            <LogoImg height={22} className="py-3" />
+            <nav
+              role="tablist"
+              aria-label={t('nav.sections')}
+              onKeyDown={onTabKeyDown}
+              className="-mb-px flex w-full gap-6 overflow-x-auto sm:ml-auto sm:w-auto"
+            >
+              {NAV.map(({ view, label }, i) => {
+                const selected = currentView === view;
+                return (
+                  <button
+                    key={view}
+                    id={`${view}-tab`}
+                    role="tab"
+                    aria-selected={selected}
+                    aria-controls="main-panel"
+                    tabIndex={selected ? 0 : -1}
+                    onClick={() => navigateTo(view)}
+                    title={t('nav.tabTitle', { label: t(label), n: i + 1 })}
+                    className={`whitespace-nowrap border-b-2 px-0.5 py-3 text-sm transition-colors ${
+                      selected
+                        ? 'border-primary font-medium text-foreground'
+                        : 'border-transparent text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {t(label)}
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
         </header>
 
-        <nav 
-          className="bg-card rounded-lg shadow-sm border border-border mb-3 md:mb-4 px-1 py-1 flex gap-1 flex-shrink-0" 
-          role="tablist" 
-          aria-label="Main navigation"
-        >
-          <button
-            id="dashboard-tab"
-            onClick={() => navigateTo('dashboard')}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                navigateTo('dashboard');
-              }
-            }}
-            role="tab"
-            tabIndex={currentView === 'dashboard' ? 0 : -1}
-            aria-selected={currentView === 'dashboard'}
-            aria-controls="dashboard-panel"
-            className={`flex items-center justify-center gap-1.5 md:gap-2 px-3 md:px-5 py-2.5 md:py-3 rounded-lg transition-all duration-200 ease-in-out flex-1 relative min-h-[44px] cursor-pointer ${
-              currentView === 'dashboard'
-                ? 'bg-primary text-primary-foreground shadow-md'
-                : 'text-muted-foreground hover:text-foreground hover:bg-primary/5'
-            } focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2`}
-            aria-label="Relief Now"
-            title="Relief Now (Alt+1)"
-          >
-            <Activity className="w-4 h-4 md:w-4 md:h-4 flex-shrink-0" />
-            <span className="text-xs md:text-sm font-medium hidden sm:inline uppercase">Relief</span>
-          </button>
-          <button
-            id="library-tab"
-            onClick={() => navigateTo('library')}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                navigateTo('library');
-              }
-            }}
-            role="tab"
-            tabIndex={currentView === 'library' ? 0 : -1}
-            aria-selected={currentView === 'library'}
-            aria-controls="library-panel"
-            className={`flex items-center justify-center gap-1.5 md:gap-2 px-3 md:px-5 py-2.5 md:py-3 rounded-lg transition-all duration-200 ease-in-out flex-1 relative min-h-[44px] cursor-pointer ${
-              currentView === 'library'
-                ? 'bg-primary text-primary-foreground shadow-md'
-                : 'text-muted-foreground hover:text-foreground hover:bg-primary/5'
-            } focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2`}
-            aria-label="Exercise Library"
-            title="Exercise Library (Alt+2)"
-          >
-            <Library className="w-4 h-4 md:w-4 md:h-4 flex-shrink-0" />
-            <span className="text-xs md:text-sm font-medium hidden sm:inline uppercase">Library</span>
-          </button>
-          <button
-            id="progress-tab"
-            onClick={() => navigateTo('progress')}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                navigateTo('progress');
-              }
-            }}
-            role="tab"
-            tabIndex={currentView === 'progress' ? 0 : -1}
-            aria-selected={currentView === 'progress'}
-            aria-controls="progress-panel"
-            className={`flex items-center justify-center gap-1.5 md:gap-2 px-3 md:px-5 py-2.5 md:py-3 rounded-lg transition-all duration-200 ease-in-out flex-1 relative min-h-[44px] cursor-pointer ${
-              currentView === 'progress'
-                ? 'bg-primary text-primary-foreground shadow-md'
-                : 'text-muted-foreground hover:text-foreground hover:bg-primary/5'
-            } focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2`}
-            aria-label="Relief Stats"
-            title="Relief Stats (Alt+3)"
-          >
-            <TrendingUp className="w-4 h-4 md:w-4 md:h-4 flex-shrink-0" />
-            <span className="text-xs md:text-sm font-medium hidden sm:inline uppercase">Stats</span>
-          </button>
-          <button
-            id="settings-tab"
-            onClick={() => navigateTo('settings')}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                navigateTo('settings');
-              }
-            }}
-            role="tab"
-            tabIndex={currentView === 'settings' ? 0 : -1}
-            aria-selected={currentView === 'settings'}
-            aria-controls="settings-panel"
-            className={`flex items-center justify-center gap-1.5 md:gap-2 px-3 md:px-5 py-2.5 md:py-3 rounded-lg transition-all duration-200 ease-in-out flex-1 relative min-h-[44px] cursor-pointer ${
-              currentView === 'settings'
-                ? 'bg-primary text-primary-foreground shadow-md'
-                : 'text-muted-foreground hover:text-foreground hover:bg-primary/5'
-            } focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2`}
-            aria-label="Settings"
-            title="Settings (Alt+4)"
-          >
-            <SettingsIcon className="w-4 h-4 md:w-4 md:h-4 flex-shrink-0" />
-            <span className="text-xs md:text-sm font-medium hidden sm:inline uppercase">Settings</span>
-          </button>
-        </nav>
-
-        <main 
-          className={`flex-1 min-h-0 px-1 scroll-smooth ${
-            currentView === 'dashboard' ? 'overflow-hidden' : 'overflow-y-auto'
-          }`}
+        <main
+          id="main-panel"
           role="tabpanel"
-          id={`${currentView}-panel`}
           aria-labelledby={`${currentView}-tab`}
+          key={currentView}
+          className="mx-auto max-w-5xl px-4 py-8 sm:px-6"
         >
           {currentView === 'dashboard' && (
             <Dashboard
-              onStartRoutine={startRoutine}
+              key={hashNav}
               reliefData={reliefData}
-              settings={settings}
+              remindersEnabled={settings.remindersEnabled}
+              onStartRoutine={startRoutine}
+              onOpenSettings={() => navigateTo('settings')}
             />
           )}
           {currentView === 'library' && (
-            <ExerciseLibrary onStartRoutine={startRoutine} />
+            <ExerciseLibrary
+              savedRoutines={savedRoutines}
+              onStartRoutine={startRoutine}
+              onSaveRoutine={saveRoutine}
+              onDeleteRoutine={deleteRoutine}
+            />
           )}
           {currentView === 'progress' && (
-            <ProgressTracker
-              reliefData={reliefData}
-              onNavigateToDashboard={() => navigateTo('dashboard')}
-            />
+            <ProgressTracker reliefData={reliefData} onNavigateToDashboard={() => navigateTo('dashboard')} />
           )}
           {currentView === 'settings' && (
             <Settings
               settings={settings}
-              onUpdateSettings={setSettings}
+              reliefData={reliefData}
+              onUpdateSettings={updateSettings}
               onClearRelief={handleClearRelief}
+              onImportRelief={handleImportRelief}
             />
           )}
         </main>
       </div>
-    </div>
+    </LocaleContext.Provider>
   );
 }

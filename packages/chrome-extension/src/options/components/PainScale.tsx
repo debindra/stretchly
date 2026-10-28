@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import { useRef, type KeyboardEvent } from 'react';
+import { t } from '../../i18n';
 
 interface PainScaleProps {
   value: number;
@@ -6,138 +7,113 @@ interface PainScaleProps {
   min?: number;
   max?: number;
   label?: string;
-  /** 'mild-severe' | 'no-pain-severe' | 'before-after' */
-  variant?: 'mild-severe' | 'no-pain-severe' | 'before-after';
-  beforeValue?: number;
-  /** Optional second line e.g. "Before" / "After" */
-  sublabel?: ReactNode;
+  /** End labels under the scale. */
+  variant?: 'mild-severe' | 'no-pain-severe';
+  /** Shorter cells for inline use. */
+  compact?: boolean;
   className?: string;
-  /** Optional ID for range input */
   id?: string;
-  /** Whether the pain scale is disabled */
-  disabled?: boolean;
-  /** Optional ID of element that describes the scale (e.g. "1 = mild, 10 = severe") */
-  ariaDescribedBy?: string;
 }
 
-const steps = (min: number, max: number) => {
-  const arr: number[] = [];
-  for (let i = min; i <= max; i++) arr.push(i);
-  return arr;
-};
-
-/** Segment color by level: low = teal, mid = amber, high = red */
-function segmentColor(level: number, min: number, max: number, isSelected: boolean) {
-  if (!isSelected) return 'bg-muted';
-  const span = max - min || 1;
-  const t = (level - min) / span;
-  if (t <= 1 / 3) return 'bg-primary'; // teal
-  if (t <= 2 / 3) return 'bg-amber-400';
-  return 'bg-red-400';
+function severityWord(level: number): string {
+  if (level === 0) return t('pain.none');
+  if (level <= 3) return t('pain.mild');
+  if (level <= 6) return t('pain.moderate');
+  if (level <= 8) return t('pain.strong');
+  return t('pain.severe');
 }
 
+/**
+ * Numeric rating scale (0 or 1 to 10). Behaves as a radio group: click a cell,
+ * or focus the current one and use arrow keys / Home / End.
+ */
 export function PainScale({
   value,
   onChange,
   min = 1,
   max = 10,
-  label = 'Pain level',
+  label = t('pain.label'),
   variant = 'mild-severe',
-  beforeValue,
-  sublabel,
+  compact = false,
   className = '',
   id,
-  disabled = false,
-  ariaDescribedBy,
 }: PainScaleProps) {
-  const levels = steps(min, max);
-  const isBeforeAfter = variant === 'before-after';
+  const groupRef = useRef<HTMLDivElement>(null);
+  const levels = Array.from({ length: max - min + 1 }, (_, i) => min + i);
+  const labelId = id ? `${id}-label` : undefined;
 
-  const isCompact = className.includes('compact');
-  
+  const select = (level: number) => {
+    const next = Math.min(max, Math.max(min, level));
+    onChange(next);
+    groupRef.current?.querySelector<HTMLButtonElement>(`[data-level="${next}"]`)?.focus();
+  };
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    const keys: Record<string, number> = {
+      ArrowRight: value + 1,
+      ArrowUp: value + 1,
+      ArrowLeft: value - 1,
+      ArrowDown: value - 1,
+      Home: min,
+      End: max,
+    };
+    if (e.key in keys) {
+      e.preventDefault();
+      e.stopPropagation();
+      select(keys[e.key]);
+    }
+  };
+
   return (
     <div className={className}>
-      <div className={`flex items-center justify-between ${isCompact ? 'mb-2' : 'mb-3'}`}>
-        <label htmlFor={id} className={`text-foreground font-semibold ${isCompact ? 'text-sm' : 'text-base'}`}>
+      <div className="mb-2 flex items-baseline justify-between gap-4">
+        <span id={labelId} className="text-sm font-medium">
           {label}
-        </label>
-        <span className={`font-bold text-primary ${isCompact ? 'text-xl md:text-2xl' : 'text-2xl md:text-3xl'}`}>
-          {value}/{max}
+        </span>
+        <span className="text-sm tabular-nums text-muted-foreground" aria-live="polite">
+          <span className="font-medium text-foreground">{value}</span> / {max} · {severityWord(value)}
         </span>
       </div>
 
-      {isBeforeAfter && beforeValue != null && (
-        <div className="flex items-center justify-center gap-6 mb-6">
-          <div className="text-center">
-            <p className="text-xs text-muted-foreground mb-2 font-medium">Before</p>
-            <div className="w-14 h-14 md:w-16 md:h-16 bg-red-50 border-2 border-red-200 rounded-full flex items-center justify-center">
-              <span className="text-red-600 text-lg md:text-xl font-bold">{beforeValue}</span>
-            </div>
-          </div>
-          <div className="text-xl md:text-2xl text-disabled-foreground" aria-hidden="true">→</div>
-          <div className="text-center">
-            <p className="text-xs text-muted-foreground mb-2 font-medium">After</p>
-            <div className="w-14 h-14 md:w-16 md:h-16 bg-primary/10 border-2 border-primary/30 rounded-full flex items-center justify-center">
-              <span className="text-primary text-lg md:text-xl font-bold">{value}</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <input
+      <div
+        ref={groupRef}
         id={id}
-        type="range"
-        min={min}
-        max={max}
-        value={value}
-        onChange={e => onChange(parseInt(e.target.value, 10))}
-        disabled={disabled}
-        className={`w-full h-2.5 bg-[var(--switch-background)] rounded-lg appearance-none ${isCompact ? 'mb-2' : 'mb-3'} ${
-          disabled 
-            ? 'cursor-not-allowed opacity-50' 
-            : 'cursor-pointer accent-primary'
-        }`}
-        aria-label={label}
-        aria-disabled={disabled}
-        {...(ariaDescribedBy && { 'aria-describedby': ariaDescribedBy })}
-      />
-
-      <div className={`flex items-center gap-1.5 ${isCompact ? 'mb-1.5' : 'mb-2'}`}>
-        {levels.map(level => (
-          <button
-            key={level}
-            type="button"
-            onClick={() => !disabled && onChange(level)}
-            disabled={disabled}
-            className={`flex-1 ${isCompact ? 'h-5' : 'h-6'} rounded transition-all ${
-              disabled
-                ? 'cursor-not-allowed opacity-50'
-                : 'cursor-pointer'
-            } ${
-              level <= value
-                ? segmentColor(level, min, max, true)
-                : 'bg-muted'
-            } ${level === value ? 'ring-2 ring-primary ring-offset-1' : ''}`}
-            aria-label={`${label} ${level}`}
-            aria-disabled={disabled}
-          />
-        ))}
+        role="radiogroup"
+        aria-labelledby={labelId}
+        aria-label={labelId ? undefined : label}
+        onKeyDown={onKeyDown}
+        className="grid gap-1"
+        style={{ gridTemplateColumns: `repeat(${levels.length}, minmax(0, 1fr))` }}
+      >
+        {levels.map((level) => {
+          const filled = level <= value;
+          const current = level === value;
+          return (
+            <button
+              key={level}
+              type="button"
+              role="radio"
+              aria-checked={current}
+              aria-label={t('pain.cell', { level, word: severityWord(level) })}
+              data-level={level}
+              tabIndex={current ? 0 : -1}
+              onClick={() => select(level)}
+              className={`rounded-sm border text-xs tabular-nums transition-colors ${compact ? 'h-8' : 'h-10'} ${
+                filled
+                  ? 'border-primary bg-primary text-primary-foreground'
+                  : 'border-border bg-card text-muted-foreground hover:border-muted-foreground hover:text-foreground'
+              } ${current ? 'outline outline-2 outline-offset-2 outline-primary' : ''}`}
+            >
+              {level}
+            </button>
+          );
+        })}
       </div>
 
-      {variant === 'mild-severe' && (
-        <div className="flex justify-between text-xs text-muted-foreground">
-          <span>Mild</span>
-          <span>Moderate</span>
-          <span>Severe</span>
-        </div>
-      )}
-      {(variant === 'no-pain-severe' || (variant === 'before-after' && min === 0)) && (
-        <div className="flex justify-between text-xs text-muted-foreground">
-          <span>No pain</span>
-          <span>Severe</span>
-        </div>
-      )}
-      {sublabel && <div className="text-sm text-muted-foreground mt-2">{sublabel}</div>}
+      <div className="mt-1.5 flex justify-between text-xs text-muted-foreground">
+        <span>{variant === 'mild-severe' ? t('pain.mild') : t('pain.none')}</span>
+        <span>{t('pain.severe')}</span>
+      </div>
     </div>
   );
 }

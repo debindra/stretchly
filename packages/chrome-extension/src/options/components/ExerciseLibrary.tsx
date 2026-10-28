@@ -1,326 +1,360 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
-import type { Exercise } from '@stretchly/shared';
-import { exercises } from '@stretchly/shared';
-import { Clock, Plus, Check, AlertCircle, Play } from 'lucide-react';
-import { ExerciseAnimation } from './ExerciseAnimations';
+import { useState, useMemo } from 'react';
+import type { Exercise, SavedRoutine } from '@stretchly/shared';
+import { exercises, localizeExercise } from '@stretchly/shared';
+import { Search } from 'lucide-react';
+import { ExerciseAnimation, ExerciseStill, hasAnimation } from './ExerciseAnimations';
 import { PainScale } from './PainScale';
+import { Modal } from './Modal';
+import { formatSeconds } from '../utils/formatDate';
+import { exercisesFor, totalSeconds } from '../utils/routines';
+import { formatList, t, tp } from '../../i18n';
+import { tNode, useLocale } from '../../i18n/react';
 
 interface ExerciseLibraryProps {
+  savedRoutines: SavedRoutine[];
   onStartRoutine: (exercises: Exercise[], painArea: string, painLevel: number) => void;
+  onSaveRoutine: (name: string, exerciseIds: string[]) => void;
+  onDeleteRoutine: (id: string) => void;
 }
 
-type Category = 'all' | 'neck' | 'shoulders' | 'back' | 'hips' | 'wrists' | 'eyes';
+type Category = 'all' | Exercise['category'];
 
-export function ExerciseLibrary({ onStartRoutine }: ExerciseLibraryProps) {
-  const [selectedCategory, setSelectedCategory] = useState<Category>('all');
-  const [customRoutine, setCustomRoutine] = useState<Exercise[]>([]);
-  const [showLaunchModal, setShowLaunchModal] = useState(false);
+const CATEGORIES: Category[] = ['all', 'neck', 'shoulders', 'back', 'hips', 'legs', 'wrists', 'eyes'];
+
+export const categoryLabel = (key: Category) => t(`category.${key}`);
+
+export function ExerciseLibrary({ savedRoutines, onStartRoutine, onSaveRoutine, onDeleteRoutine }: ExerciseLibraryProps) {
+  const [category, setCategory] = useState<Category>('all');
+  const [routine, setRoutine] = useState<Exercise[]>([]);
+  /** Exercises about to start; set when the before-rating dialog is open. */
+  const [launch, setLaunch] = useState<Exercise[] | null>(null);
+  const [naming, setNaming] = useState(false);
+  const [routineName, setRoutineName] = useState('');
   const [painLevel, setPainLevel] = useState(5);
-  const [previewExercise, setPreviewExercise] = useState<string | null>(null);
-  const launchButtonRef = useRef<HTMLButtonElement>(null);
-  const launchModalCancelRef = useRef<HTMLButtonElement>(null);
-  const previewOpenerRef = useRef<HTMLElement | null>(null);
-  const previewCloseRef = useRef<HTMLButtonElement>(null);
+  const [preview, setPreview] = useState<Exercise | null>(null);
+  const [query, setQuery] = useState('');
+  const locale = useLocale();
+  const all = useMemo(() => exercises.map((ex) => localizeExercise(ex, locale)), [locale]);
 
-  const categories: { key: Category; label: string }[] = [
-    { key: 'all', label: 'All' },
-    { key: 'neck', label: 'Neck' },
-    { key: 'shoulders', label: 'Shoulders' },
-    { key: 'back', label: 'Back' },
-    { key: 'hips', label: 'Hips' },
-    { key: 'wrists', label: 'Wrists' },
-    { key: 'eyes', label: 'Eyes' },
-  ];
+  const counts = useMemo(() => {
+    const c: Partial<Record<Category, number>> = { all: all.length };
+    for (const ex of all) c[ex.category] = (c[ex.category] ?? 0) + 1;
+    return c;
+  }, [all]);
 
-  const filteredExercises = useMemo(() => {
-    return selectedCategory === 'all'
-      ? exercises
-      : exercises.filter(ex => ex.category === selectedCategory);
-  }, [selectedCategory]);
+  const filtered = useMemo(() => {
+    const q = query.trim().toLocaleLowerCase(locale);
+    return all.filter(
+      (ex) =>
+        (category === 'all' || ex.category === category) &&
+        (!q ||
+          ex.name.toLocaleLowerCase(locale).includes(q) ||
+          ex.description.toLocaleLowerCase(locale).includes(q))
+    );
+  }, [all, category, query, locale]);
+  const selectedIds = useMemo(() => new Set(routine.map((ex) => ex.id)), [routine]);
+  const totalDuration = routine.reduce((sum, ex) => sum + ex.duration, 0);
 
-  const isInCustomRoutine = (exercise: Exercise) => {
-    return customRoutine.some(ex => ex.id === exercise.id);
+  const toggle = (exercise: Exercise) =>
+    setRoutine((prev) =>
+      prev.some((ex) => ex.id === exercise.id) ? prev.filter((ex) => ex.id !== exercise.id) : [...prev, exercise]
+    );
+
+  const start = () => {
+    if (!launch) return;
+    onStartRoutine(launch, 'custom', painLevel);
+    if (launch === routine) setRoutine([]);
+    setLaunch(null);
   };
 
-  const toggleExerciseInRoutine = (exercise: Exercise) => {
-    if (isInCustomRoutine(exercise)) {
-      setCustomRoutine(customRoutine.filter(ex => ex.id !== exercise.id));
-    } else {
-      setCustomRoutine([...customRoutine, exercise]);
-    }
+  const save = () => {
+    const name = routineName.trim();
+    if (!name) return;
+    onSaveRoutine(name, routine.map((ex) => ex.id));
+    setRoutine([]);
+    setRoutineName('');
+    setNaming(false);
   };
 
-  const startCustomRoutine = () => {
-    if (customRoutine.length > 0) {
-      onStartRoutine(customRoutine, 'custom', painLevel);
-      setCustomRoutine([]);
-      setShowLaunchModal(false);
-    }
-  };
-
-  const totalDuration = customRoutine.reduce((sum, ex) => sum + ex.duration, 0);
-
-  useEffect(() => {
-    if (!showLaunchModal) return;
-    launchModalCancelRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        setShowLaunchModal(false);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      launchButtonRef.current?.focus();
-    };
-  }, [showLaunchModal]);
-
-  useEffect(() => {
-    if (!previewExercise) return;
-    previewCloseRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        setPreviewExercise(null);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      previewOpenerRef.current?.focus();
-    };
-  }, [previewExercise]);
+  const button = 'rounded-md border border-border bg-card px-3 py-1.5 text-sm font-medium transition-colors hover:bg-muted';
 
   return (
-    <div className="space-y-6 pb-6">
-      {/* Category Filter */}
-      <div className="bg-card rounded-xl p-5 shadow-sm border border-border">
-        <div className="flex flex-wrap gap-2">
-          {categories.map(cat => (
-            <button
-              key={cat.key}
-              onClick={() => setSelectedCategory(cat.key)}
-              className={`px-4 py-2.5 rounded-lg transition-all duration-200 font-medium text-sm min-h-[44px] cursor-pointer ${
-                selectedCategory === cat.key
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'bg-muted text-muted-foreground hover:text-foreground hover:bg-primary/5 active:scale-95'
-              }`}
-            >
-              {cat.label}
-            </button>
-          ))}
+    <div className={routine.length > 0 ? 'pb-24' : ''}>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">{t('nav.library')}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{tp('library.intro', all.length)}</p>
         </div>
+        <label className="relative w-full sm:w-60">
+          <span className="sr-only">{t('library.searchLabel')}</span>
+          <Search
+            className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+            aria-hidden
+          />
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t('library.searchPlaceholder')}
+            className="h-9 w-full rounded-md border border-border bg-input pl-8 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
+          />
+        </label>
       </div>
 
-      {/* Custom Routine Builder */}
-      {customRoutine.length > 0 && (
-        <div className="bg-primary rounded-xl p-5 text-white shadow-lg">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-lg font-bold mb-1">Custom Routine</h3>
-              <p className="text-white/90 text-sm">
-                {customRoutine.length} exercise{customRoutine.length !== 1 ? 's' : ''} • {totalDuration}s
-              </p>
-            </div>
-            <button
-              ref={launchButtonRef}
-              onClick={() => setShowLaunchModal(true)}
-              className="px-6 py-3 rounded-lg bg-accent text-accent-foreground hover:bg-accent active:scale-95 transition-all duration-200 shadow-md font-semibold"
-            >
-              Launch
-            </button>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {customRoutine.map(ex => (
-              <div
-                key={ex.id}
-                className="bg-white/20 px-3 py-1.5 rounded-lg text-sm flex items-center gap-2 font-medium"
-              >
-                {ex.name}
-                <button
-                  onClick={() => toggleExerciseInRoutine(ex)}
-                  className="cursor-pointer hover:text-white hover:bg-white/20 rounded-full w-5 h-5 flex items-center justify-center transition-all duration-200 ml-1 active:scale-90"
-                  aria-label={`Remove ${ex.name}`}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
+      {savedRoutines.length > 0 && (
+        <section className="mt-6">
+          <h2 className="text-sm font-semibold">{t('library.yourRoutines')}</h2>
+          <ul className="mt-2 divide-y divide-border border-y border-border">
+            {savedRoutines.map((r) => {
+              const list = exercisesFor(r.exerciseIds, locale);
+              return (
+                <li key={r.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">{r.name}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {formatList(list.map((ex) => ex.name))} · {formatSeconds(totalSeconds(list))}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onDeleteRoutine(r.id)}
+                    className="text-sm text-muted-foreground transition-colors hover:text-destructive"
+                  >
+                    {t('common.delete')}
+                  </button>
+                  <button type="button" onClick={() => setLaunch(list)} disabled={list.length === 0} className={button}>
+                    {t('common.start')}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
       )}
 
-      {/* Launch Modal */}
-      {showLaunchModal && (
-        <div
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="launch-modal-title"
-          onClick={() => setShowLaunchModal(false)}
-        >
-          <div
-            className="bg-card rounded-xl p-6 max-w-md w-full shadow-2xl animate-in slide-in-from-bottom-4 duration-300 border border-border"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 id="launch-modal-title" className="text-xl text-foreground mb-4 font-bold">Rate your discomfort</h2>
-
-            <div className="mb-6">
-              <PainScale
-                id="library-pain-level"
-                value={painLevel}
-                onChange={setPainLevel}
-                min={1}
-                max={10}
-                label="Discomfort level"
-                variant="mild-severe"
-              />
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                ref={launchModalCancelRef}
-                onClick={() => setShowLaunchModal(false)}
-                className="flex-1 bg-muted text-foreground py-3 rounded-lg hover:bg-primary/10 active:scale-95 transition-all duration-200 font-medium cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={startCustomRoutine}
-                className="flex-1 bg-accent text-accent-foreground py-3 rounded-lg hover:bg-accent active:scale-95 transition-all duration-200 shadow-lg font-semibold cursor-pointer"
-              >
-                Start
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Exercise Grid */}
-      {filteredExercises.length > 0 && (
-        <div className="text-sm text-muted-foreground mb-3">
-          {filteredExercises.length} exercise{filteredExercises.length !== 1 ? 's' : ''}
-        </div>
-      )}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-5">
-        {filteredExercises.map(exercise => {
-          const isSelected = isInCustomRoutine(exercise);
-
+      <div className="mt-5 flex gap-1.5 overflow-x-auto border-b border-border pb-3 [scrollbar-width:none] sm:flex-wrap" role="group" aria-label={t('library.filterByArea')}>
+        {CATEGORIES.filter((cat) => counts[cat]).map((cat) => {
+          const active = category === cat;
           return (
-            <div
-              key={exercise.id}
-              className={`bg-card rounded-lg p-5 shadow-sm border transition-all duration-200 hover:shadow-lg hover:scale-[1.02] hover:bg-card/50 flex flex-col h-full ${
-                isSelected
-                  ? 'border-primary shadow-md'
-                  : 'border-border hover:border-primary/40'
+            <button
+              key={cat}
+              type="button"
+              aria-pressed={active}
+              onClick={() => setCategory(cat)}
+              className={`shrink-0 rounded-md border px-2.5 py-1 text-sm transition-colors ${
+                active
+                  ? 'border-foreground bg-foreground text-background'
+                  : 'border-border bg-card text-muted-foreground hover:border-muted-foreground hover:text-foreground'
               }`}
             >
-              {/* Header - fixed at top */}
-              <div className="flex items-start justify-between mb-4 shrink-0">
-                <span className="px-3 py-1.5 bg-primary/10 text-primary rounded-full text-xs font-medium ">
-                  {exercise.category}
-                </span>
-                <button
-                  onClick={() => toggleExerciseInRoutine(exercise)}
-                  className={`w-8 h-8 rounded-md flex items-center justify-center transition-all duration-200 focus-subtle group cursor-pointer ${
-                    isSelected
-                      ? 'bg-primary text-primary-foreground shadow-sm hover:bg-primary-hover hover:scale-110'
-                      : 'bg-muted text-muted-foreground hover:bg-primary hover:text-white hover:scale-110 active:scale-95'
-                  }`}
-                  aria-label={isSelected ? `Remove ${exercise.name}` : `Add ${exercise.name}`}
-                >
-                  {isSelected ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4 group-hover:text-white transition-colors" />}
-                </button>
-              </div>
-
-              {/* Content area - grows to fill space */}
-              <div className="grow flex flex-col">
-                <h3 className="text-foreground mb-2 text-base font-semibold">{exercise.name}</h3>
-                <p className="text-muted-foreground text-sm mb-4 leading-relaxed">{exercise.description}</p>
-
-                <div className="flex items-center gap-2 text-muted-foreground text-sm mb-4">
-                  <Clock className="w-4 h-4" />
-                  <span className="font-medium">{exercise.duration}s</span>
-                </div>
-
-                <details className="mb-4">
-                  <summary className="text-primary text-sm cursor-pointer hover:text-primary-hover font-medium transition-colors">
-                    View instructions
-                  </summary>
-                  <ol className="mt-3 space-y-2 text-sm text-muted-foreground pl-4">
-                    {exercise.instructions.map((instruction, idx) => (
-                      <li key={idx} className="flex gap-2">
-                        <span className="text-primary font-semibold shrink-0">{idx + 1}.</span>
-                        <span>{instruction}</span>
-                      </li>
-                    ))}
-                  </ol>
-                </details>
-              </div>
-
-              {/* Button - fixed at bottom */}
-              <button
-                onClick={(e) => {
-                  previewOpenerRef.current = e.currentTarget;
-                  setPreviewExercise(exercise.id);
-                }}
-                className="group w-full flex items-center justify-center gap-2 border border-primary text-primary bg-transparent hover:bg-primary group-hover:text-white hover:text-white active:scale-95 transition-all duration-200 font-medium px-4 py-2.5 rounded-md hover:shadow-md text-sm focus-prominent shrink-0 cursor-pointer"
-              >
-                <Play className="w-4 h-4 text-primary group-hover:text-white hover:text-white transition-colors" />
-                <span className="group-hover:text-white transition-colors">Watch animation</span>
-              </button>
-            </div>
+              {categoryLabel(cat)} <span className="tabular-nums opacity-60">{counts[cat]}</span>
+            </button>
           );
         })}
       </div>
 
-      {filteredExercises.length === 0 && (
-        <div className="text-center py-12 bg-card rounded-xl p-8 border border-border">
-          <AlertCircle className="w-12 h-12 text-disabled-foreground mx-auto mb-4" />
-          <p className="text-foreground font-medium mb-2">No exercises found</p>
-          <p className="text-muted-foreground text-sm">
-            No exercises in this category. Try selecting "All" or another category.
+      {filtered.length === 0 ? (
+        <div className="py-16 text-sm">
+          <p className="font-medium">{t('library.noMatch')}</p>
+          <p className="mt-1 text-muted-foreground">
+            {tNode('library.noMatchHint', {
+              clear: (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuery('');
+                    setCategory('all');
+                  }}
+                  className="text-primary underline underline-offset-2"
+                >
+                  {t('library.clearFilters')}
+                </button>
+              ),
+            })}
           </p>
+        </div>
+      ) : (
+        <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {filtered.map((exercise) => {
+            const added = selectedIds.has(exercise.id);
+            return (
+              <article
+                key={exercise.id}
+                className={`flex flex-col overflow-hidden rounded-lg border bg-card transition-colors ${
+                  added ? 'border-primary ring-1 ring-primary' : 'border-border'
+                }`}
+              >
+                <div className="flex aspect-[2/1] items-center justify-center border-b border-border bg-muted">
+                  {hasAnimation(exercise.id) ? (
+                    <ExerciseStill exerciseId={exercise.id} className="h-full w-full p-2" />
+                  ) : (
+                    <span className="text-xs text-muted-foreground">{t('library.textOnly')}</span>
+                  )}
+                </div>
+                <div className="flex flex-1 flex-col p-4">
+                  <p className="text-xs text-muted-foreground">
+                    {categoryLabel(exercise.category)} · {formatSeconds(exercise.duration)}
+                  </p>
+                  <h3 className="mt-1 font-medium">{exercise.name}</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">{exercise.description}</p>
+
+                  <details className="mt-3 text-sm">
+                    <summary className="w-fit text-muted-foreground hover:text-foreground">{t('library.instructions')}</summary>
+                    <ol className="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
+                      {exercise.instructions.map((step, idx) => (
+                        <li key={idx}>{step}</li>
+                      ))}
+                    </ol>
+                  </details>
+
+                  <div className="mt-auto flex gap-2 pt-4">
+                  <button type="button" onClick={() => setPreview(exercise)} className={button}>
+                    {t('library.preview')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggle(exercise)}
+                    aria-pressed={added}
+                    className={
+                      added
+                        ? 'rounded-md border border-primary bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover'
+                        : button
+                    }
+                  >
+                    {added ? t('library.added') : t('library.addToRoutine')}
+                  </button>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
         </div>
       )}
 
-
-      {/* Exercise Animation Preview */}
-      {previewExercise && (
-        <div
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="preview-modal-title"
-          onClick={() => setPreviewExercise(null)}
-        >
-          <div
-            className="bg-card rounded-xl p-6 max-w-md w-full shadow-2xl animate-in slide-in-from-bottom-4 duration-300 border border-border"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-4">
-              <h2 id="preview-modal-title" className="text-lg text-foreground font-bold">Preview</h2>
-              <button
-                ref={previewCloseRef}
-                onClick={() => setPreviewExercise(null)}
-                className="w-8 h-8 bg-muted rounded-full flex items-center justify-center hover:bg-primary/10 hover:text-primary active:scale-95 transition-all text-lg text-foreground cursor-pointer"
-                aria-label="Close preview"
+      {routine.length > 0 && (
+        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-card">
+          <div className="mx-auto flex max-w-5xl items-center gap-4 px-4 py-3 sm:px-6">
+            {naming ? (
+              <form
+                className="flex min-w-0 flex-1 items-center gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  save();
+                }}
               >
-                ×
-              </button>
-            </div>
-            <div className="bg-muted rounded-lg p-4 mb-4">
-              <ExerciseAnimation exerciseId={previewExercise} isPlaying={true} />
-            </div>
+                <label className="sr-only" htmlFor="routine-name">
+                  {t('library.routineName')}
+                </label>
+                <input
+                  id="routine-name"
+                  autoFocus
+                  value={routineName}
+                  onChange={(e) => setRoutineName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Escape' && setNaming(false)}
+                  placeholder={t('library.namePlaceholder')}
+                  maxLength={40}
+                  className="h-9 min-w-0 flex-1 rounded-md border border-border bg-input px-3 text-sm outline-none focus:border-primary"
+                />
+                <button type="submit" disabled={!routineName.trim()} className={`${button} disabled:opacity-40`}>
+                  {t('common.save')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNaming(false)}
+                  className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {t('common.cancel')}
+                </button>
+              </form>
+            ) : (
+              <>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">
+                    {tp('count.exercises', routine.length)} · {formatSeconds(totalDuration)}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">{formatList(routine.map((ex) => ex.name))}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRoutine([])}
+                  className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {t('library.clear')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNaming(true)}
+                  className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {t('library.saveAsRoutine')}
+                </button>
+              </>
+            )}
             <button
-              onClick={() => setPreviewExercise(null)}
-              className="w-full bg-primary text-primary-foreground py-3 rounded-lg hover:bg-primary-hover active:scale-95 transition-all duration-200 font-semibold cursor-pointer"
+              type="button"
+              onClick={() => setLaunch(routine)}
+              className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent-hover"
             >
-              Close
+              {t('common.start')}
             </button>
           </div>
         </div>
+      )}
+
+      {launch && (
+        <Modal
+          title={t('library.beforeStart')}
+          onClose={() => setLaunch(null)}
+          footer={
+            <>
+              <button type="button" onClick={() => setLaunch(null)} className={button}>
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={start}
+                className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent-hover"
+              >
+                {t('common.startRoutine')}
+              </button>
+            </>
+          }
+        >
+          <PainScale id="library-pain-level" value={painLevel} onChange={setPainLevel} label={t('library.discomfortNow')} />
+        </Modal>
+      )}
+
+      {preview && (
+        <Modal title={preview.name} onClose={() => setPreview(null)}>
+          <ExerciseAnimation
+            exerciseId={preview.id}
+            isPlaying
+            fallback={
+              <ol className="list-decimal space-y-1 px-8 pl-12 text-sm">
+                {preview.instructions.map((step, i) => (
+                  <li key={i}>{step}</li>
+                ))}
+              </ol>
+            }
+          />
+          <p className="mt-3 text-sm text-muted-foreground">{preview.description}</p>
+          <div className="mt-5 flex justify-end">
+            <button
+              type="button"
+              onClick={() => {
+                toggle(preview);
+                setPreview(null);
+              }}
+              className={
+                selectedIds.has(preview.id)
+                  ? button
+                  : 'rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover'
+              }
+            >
+              {selectedIds.has(preview.id) ? t('library.removeFromRoutine') : t('library.addToRoutine')}
+            </button>
+          </div>
+        </Modal>
       )}
     </div>
   );
